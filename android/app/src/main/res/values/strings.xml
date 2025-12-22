@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">VaultKey</string>
+    <string name="title_activity_main">VaultKey</string>
+    <string name="package_name">app.vaultkey.wallet</string>
+    <string name="custom_url_scheme">app.vaultkey.wallet</string>
+</resources>
