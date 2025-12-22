@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Raspberry Pi Pico (CDC) -->
+    <usb-device vendor-id="11914" product-id="5" />
+    <!-- Raspberry Pi Pico (RP2040) -->
+    <usb-device vendor-id="11914" product-id="10" />
+    <!-- Raspberry Pi Pico W -->
+    <usb-device vendor-id="11914" product-id="11" />
+    <!-- Generic CDC ACM devices -->
+    <usb-device class="2" subclass="2" protocol="1" />
+</resources>
