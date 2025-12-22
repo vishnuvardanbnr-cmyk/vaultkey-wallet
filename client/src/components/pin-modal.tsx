@@ -56,6 +56,13 @@ export function PinModal() {
 
   const maxLength = pinLength;
 
+  // Sync PIN length when wallet mode changes - soft wallet always uses 5 digits
+  useEffect(() => {
+    if (walletMode === "soft_wallet") {
+      setPinLength(5);
+    }
+  }, [walletMode]);
+
   useEffect(() => {
     if (showPinModal) {
       setPin("");
@@ -63,8 +70,12 @@ export function PinModal() {
       setStep("enter");
       setError("");
       setIsLoading(false);
+      // Reset PIN length based on wallet mode when modal opens
+      if (walletMode === "soft_wallet") {
+        setPinLength(5);
+      }
     }
-  }, [showPinModal]);
+  }, [showPinModal, walletMode]);
 
   useEffect(() => {
     if (!showPinModal) {
