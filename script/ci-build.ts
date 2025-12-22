@@ -1,20 +1,34 @@
-import { execSync } from "child_process";
-import { rmSync, mkdirSync } from "fs";
+import { build as viteBuild } from "vite";
+import react from "@vitejs/plugin-react";
+import { rm } from "fs/promises";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.resolve(__dirname, "..");
 
 async function ciBuild() {
   console.log("CI Build: Building for Capacitor Android...");
   
-  // Clean dist
-  rmSync("dist", { recursive: true, force: true });
-  mkdirSync("dist/public", { recursive: true });
-  
+  await rm(path.join(rootDir, "dist"), { recursive: true, force: true });
+
   console.log("Building client with Vite...");
-  // Run vite build with CI-specific config
-  execSync("npx vite build --config vite.config.ci.ts", { 
-    cwd: path.join(process.cwd(), "client"),
-    stdio: "inherit",
-    env: { ...process.env, NODE_ENV: "production" }
+  
+  await viteBuild({
+    plugins: [react()],
+    root: path.resolve(rootDir, "client"),
+    base: "./",
+    resolve: {
+      alias: {
+        "@": path.resolve(rootDir, "client", "src"),
+        "@shared": path.resolve(rootDir, "shared"),
+        "@assets": path.resolve(rootDir, "attached_assets"),
+      },
+    },
+    build: {
+      outDir: path.resolve(rootDir, "dist", "public"),
+      emptyOutDir: true,
+    },
   });
   
   console.log("Client build complete!");
