@@ -695,8 +695,8 @@ export default function Dashboard() {
         setWalletCreationType("derive");
         toast({ title: "Wallet Created", description: `New ${selectedChain?.name || ''} wallet has been created successfully` });
       } else {
-        if (!seedPinInput || seedPinInput.length < 4) {
-          toast({ title: "Error", description: "Please enter a PIN with at least 4 characters", variant: "destructive" });
+        if (!seedPinInput || seedPinInput.length !== 5 || !/^\d+$/.test(seedPinInput)) {
+          toast({ title: "Error", description: "Please enter exactly 5 digits for your PIN", variant: "destructive" });
           return;
         }
         const result = await createWalletWithNewSeed(newWalletLabel || undefined, seedPinInput);
@@ -1076,7 +1076,7 @@ export default function Dashboard() {
                               />
                             </div>
                             <div>
-                              <Label htmlFor="seed-pin" className="text-sm">PIN for new seed (min 4 characters)</Label>
+                              <Label htmlFor="seed-pin" className="text-sm">PIN for new seed (5 digits)</Label>
                               <Input
                                 id="seed-pin"
                                 type="password"
