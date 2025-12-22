@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { cpSync, rmSync, existsSync, mkdirSync } from "fs";
+import { rmSync, mkdirSync } from "fs";
 import path from "path";
 
 async function ciBuild() {
@@ -10,8 +10,8 @@ async function ciBuild() {
   mkdirSync("dist/public", { recursive: true });
   
   console.log("Building client with Vite...");
-  // Run vite build directly from client directory
-  execSync("npx vite build --outDir ../dist/public", { 
+  // Run vite build with CI-specific config
+  execSync("npx vite build --config vite.config.ci.ts", { 
     cwd: path.join(process.cwd(), "client"),
     stdio: "inherit",
     env: { ...process.env, NODE_ENV: "production" }
