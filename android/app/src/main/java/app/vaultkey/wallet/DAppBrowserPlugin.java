@@ -270,8 +270,9 @@ public class DAppBrowserPlugin extends Plugin {
                 super.onPageFinished(view, url);
                 if (progressBar != null) progressBar.setVisibility(View.GONE);
                 try {
+                    // Only inject if not already injected - the script has its own guard
+                    // Do NOT re-dispatch ethereum#initialized as it resets React app focus
                     view.evaluateJavascript(injectionScript, null);
-                    view.evaluateJavascript("(function(){if(window.ethereum){window.dispatchEvent(new Event('ethereum#initialized'));console.log('[VK] Re-announced');}})();", null);
                 } catch (Exception e) {
                     Log.e(TAG, "Injection error", e);
                 }
