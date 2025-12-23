@@ -223,7 +223,7 @@ public class DAppBrowserPlugin extends Plugin {
             "  if (window.ethereum && window.ethereum.isVaultKey) return;" +
             "  " +
             "  const currentAddress = '%s';" +
-            "  const currentChainId = %d;" +
+            "  let currentChainId = %d;" +
             "  let requestId = 0;" +
             "  const pendingRequests = {};" +
             "  " +
@@ -232,11 +232,14 @@ public class DAppBrowserPlugin extends Plugin {
             "      this.isVaultKey = true;" +
             "      this.isMetaMask = true;" +
             "      this.isTrust = true;" +
+            "      this.isTrustWallet = true;" +
+            "      this.isCoinbaseWallet = false;" +
             "      this.isConnected = () => true;" +
             "      this.chainId = '0x' + currentChainId.toString(16);" +
             "      this.networkVersion = currentChainId.toString();" +
             "      this.selectedAddress = currentAddress;" +
             "      this._events = {};" +
+            "      this._metamask = { isUnlocked: () => Promise.resolve(true) };" +
             "    }" +
             "    " +
             "    on(event, callback) {" +
@@ -252,30 +255,51 @@ public class DAppBrowserPlugin extends Plugin {
             "      return this;" +
             "    }" +
             "    " +
+            "    removeAllListeners(event) {" +
+            "      if (event) { this._events[event] = []; } else { this._events = {}; }" +
+            "      return this;" +
+            "    }" +
+            "    " +
             "    emit(event, ...args) {" +
             "      if (this._events[event]) {" +
-            "        this._events[event].forEach(cb => cb(...args));" +
+            "        this._events[event].forEach(cb => { try { cb(...args); } catch(e) {} });" +
             "      }" +
             "    }" +
             "    " +
             "    async request({ method, params }) {" +
             "      const id = ++requestId;" +
+            "      console.log('[VaultKey] Request:', method, params);" +
             "      " +
             "      if (method === 'eth_requestAccounts' || method === 'eth_accounts') {" +
+            "        console.log('[VaultKey] Returning accounts:', [currentAddress]);" +
+            "        this.emit('connect', { chainId: this.chainId });" +
             "        return [currentAddress];" +
             "      }" +
             "      if (method === 'eth_chainId') {" +
-            "        return '0x' + currentChainId.toString(16);" +
+            "        return this.chainId;" +
             "      }" +
             "      if (method === 'net_version') {" +
-            "        return currentChainId.toString();" +
+            "        return this.networkVersion;" +
             "      }" +
             "      if (method === 'wallet_switchEthereumChain') {" +
+            "        const reqChainId = params && params[0] && params[0].chainId;" +
+            "        if (reqChainId) {" +
+            "          currentChainId = parseInt(reqChainId, 16);" +
+            "          this.chainId = reqChainId;" +
+            "          this.networkVersion = currentChainId.toString();" +
+            "          this.emit('chainChanged', reqChainId);" +
+            "        }" +
             "        return null;" +
+            "      }" +
+            "      if (method === 'wallet_addEthereumChain') {" +
+            "        return null;" +
+            "      }" +
+            "      if (method === 'eth_coinbase') {" +
+            "        return currentAddress;" +
             "      }" +
             "      " +
             "      return new Promise((resolve, reject) => {" +
-            "        pendingRequests[id] = { resolve, reject };" +
+            "        pendingRequests[id] = { resolve, reject, method };" +
             "        " +
             "        window.VaultKeyBridge.postMessage(JSON.stringify({" +
             "          id: id," +
@@ -288,7 +312,7 @@ public class DAppBrowserPlugin extends Plugin {
             "            delete pendingRequests[id];" +
             "            reject(new Error('Request timed out'));" +
             "          }" +
-            "        }, 60000);" +
+            "        }, 120000);" +
             "      });" +
             "    }" +
             "    " +
@@ -318,17 +342,35 @@ public class DAppBrowserPlugin extends Plugin {
             "  " +
             "  const provider = new VaultKeyProvider();" +
             "  " +
+            "  // Delete any existing ethereum object first" +
+            "  try { delete window.ethereum; } catch(e) {}" +
+            "  try { delete window.trustwallet; } catch(e) {}" +
+            "  try { delete window.web3; } catch(e) {}" +
+            "  " +
             "  Object.defineProperty(window, 'ethereum', {" +
             "    value: provider," +
             "    writable: false," +
-            "    configurable: true" +
+            "    configurable: false" +
+            "  });" +
+            "  " +
+            "  Object.defineProperty(window, 'trustwallet', {" +
+            "    value: { ethereum: provider, solana: null }," +
+            "    writable: false," +
+            "    configurable: false" +
+            "  });" +
+            "  " +
+            "  Object.defineProperty(window, 'web3', {" +
+            "    value: { currentProvider: provider }," +
+            "    writable: false," +
+            "    configurable: false" +
             "  });" +
             "  " +
             "  window.addEventListener('vaultkey_response', function(e) {" +
             "    const { id, result, error } = e.detail;" +
+            "    console.log('[VaultKey] Response for id:', id, 'result:', result, 'error:', error);" +
             "    if (pendingRequests[id]) {" +
             "      if (error) {" +
-            "        pendingRequests[id].reject(new Error(error.message));" +
+            "        pendingRequests[id].reject(new Error(error.message || error));" +
             "      } else {" +
             "        pendingRequests[id].resolve(result);" +
             "      }" +
@@ -336,8 +378,13 @@ public class DAppBrowserPlugin extends Plugin {
             "    }" +
             "  });" +
             "  " +
-            "  window.dispatchEvent(new Event('ethereum#initialized'));" +
-            "  console.log('[VaultKey] Web3 provider injected for mobile');" +
+            "  setTimeout(function() {" +
+            "    window.dispatchEvent(new Event('ethereum#initialized'));" +
+            "    if (window.ethereum._events['connect']) {" +
+            "      window.ethereum.emit('connect', { chainId: window.ethereum.chainId });" +
+            "    }" +
+            "  }, 0);" +
+            "  console.log('[VaultKey] Web3 provider injected - isMetaMask:', provider.isMetaMask, 'isTrust:', provider.isTrust);" +
             "})();",
             address, chainId
         );

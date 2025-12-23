@@ -106,31 +106,31 @@ interface GasEstimate {
 // RPC endpoints for client-side gas estimation (mobile)
 const RPC_ENDPOINTS: Record<string, string> = {
   'chain-0': 'https://eth.llamarpc.com',           // Ethereum
-  'chain-3': 'https://bsc-dataseed1.binance.org',  // BNB Chain
-  'chain-4': 'https://polygon-rpc.com',            // Polygon
-  'chain-5': 'https://api.avax.network/ext/bc/C/rpc', // Avalanche
-  'chain-6': 'https://arb1.arbitrum.io/rpc',       // Arbitrum
+  'chain-2': 'https://bsc-dataseed1.binance.org',  // BNB Chain (chain-2)
+  'chain-3': 'https://polygon-rpc.com',            // Polygon
+  'chain-4': 'https://api.avax.network/ext/bc/C/rpc', // Avalanche
+  'chain-5': 'https://arb1.arbitrum.io/rpc',       // Arbitrum
   'chain-7': 'https://mainnet.optimism.io',        // Optimism
 };
 
 const DEFAULT_GAS_LIMITS: Record<string, number> = {
   'chain-0': 21000,  // Ethereum
   'chain-1': 250,    // Bitcoin (vbytes)
-  'chain-2': 5000,   // Solana (compute units)
-  'chain-3': 21000,  // BNB Chain
-  'chain-4': 21000,  // Polygon
-  'chain-5': 21000,  // Avalanche
-  'chain-6': 21000,  // Arbitrum
+  'chain-2': 21000,  // BNB Chain
+  'chain-3': 21000,  // Polygon
+  'chain-4': 21000,  // Avalanche
+  'chain-5': 21000,  // Arbitrum
   'chain-7': 21000,  // Optimism
+  'chain-11': 5000,  // Solana (compute units)
   'chain-8': 0,      // TRON (bandwidth)
 };
 
 const TOKEN_GAS_LIMITS: Record<string, number> = {
   'chain-0': 65000,  // Ethereum ERC20
-  'chain-3': 65000,  // BNB Chain BEP20
-  'chain-4': 65000,  // Polygon ERC20
-  'chain-5': 65000,  // Avalanche ERC20
-  'chain-6': 65000,  // Arbitrum ERC20
+  'chain-2': 65000,  // BNB Chain BEP20
+  'chain-3': 65000,  // Polygon ERC20
+  'chain-4': 65000,  // Avalanche ERC20
+  'chain-5': 65000,  // Arbitrum ERC20
   'chain-7': 65000,  // Optimism ERC20
 };
 
@@ -238,10 +238,10 @@ async function fetchClientSideGasEstimate(chainId: string, isNative: boolean, ch
 function getFallbackGasPrice(chainId: string): number {
   const fallbacks: Record<string, number> = {
     'chain-0': 20,   // Ethereum ~20 Gwei
-    'chain-3': 3,    // BNB Chain ~3 Gwei
-    'chain-4': 30,   // Polygon ~30 Gwei
-    'chain-5': 25,   // Avalanche ~25 Gwei
-    'chain-6': 0.1,  // Arbitrum ~0.1 Gwei
+    'chain-2': 3,    // BNB Chain ~3 Gwei
+    'chain-3': 30,   // Polygon ~30 Gwei
+    'chain-4': 25,   // Avalanche ~25 Gwei
+    'chain-5': 0.1,  // Arbitrum ~0.1 Gwei
     'chain-7': 0.001, // Optimism ~0.001 Gwei
   };
   return fallbacks[chainId] || 20;
