@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ExternalLink, Globe, Wallet, ChevronRight, RefreshCw, X } from "lucide-react";
-import { BackButton } from "@/components/back-button";
+import { ExternalLink, Globe, Wallet, ChevronRight, RefreshCw, X, ArrowLeft, Lock, Copy } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -222,23 +221,45 @@ export default function DApps() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header with URL bar */}
+      {/* Main Header - VaultKey Branding */}
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b bg-background">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded bg-primary flex items-center justify-center">
+            <span className="text-primary-foreground text-xs font-bold">V</span>
+          </div>
+          <span className="font-semibold text-lg" data-testid="text-vaultkey-title">VaultKey</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <div className={`w-2 h-2 rounded-full ${connectedWallet ? 'bg-green-500' : 'bg-muted-foreground/40'}`} />
+            <span className="text-xs text-muted-foreground" data-testid="text-connection-status">
+              {connectedWallet ? 'Connected' : 'Not Connected'}
+            </span>
+          </div>
+          <Button 
+            variant="ghost" 
+            size="icon"
+            onClick={handleConnectWallet}
+            data-testid="button-lock"
+          >
+            <Lock className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* URL Bar Header */}
       <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="flex items-center gap-1.5 p-2">
-          {isNativeBrowserOpen ? (
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={closeNativeBrowser}
-              data-testid="button-close-browser"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          ) : (
-            <BackButton />
-          )}
+          <Button 
+            variant="ghost" 
+            size="icon"
+            onClick={isNativeBrowserOpen ? closeNativeBrowser : () => window.history.back()}
+            data-testid="button-back"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
 
-          <div className="flex-1 flex items-center gap-1.5 bg-muted/50 rounded-lg px-2 py-1">
+          <div className="flex-1 flex items-center gap-1.5 bg-muted/50 border rounded-md px-2 py-0.5">
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
@@ -247,7 +268,12 @@ export default function DApps() {
               className="flex-1 border-0 bg-transparent h-8 text-sm focus-visible:ring-0 px-1"
               data-testid="input-browser-url"
             />
-            <Button size="sm" onClick={handleNavigate} className="h-7 px-3" data-testid="button-go">
+            <Button 
+              size="sm" 
+              onClick={handleNavigate} 
+              className="h-7 px-4"
+              data-testid="button-go"
+            >
               Go
             </Button>
           </div>
@@ -277,15 +303,21 @@ export default function DApps() {
           </DropdownMenu>
 
           <Button
-            variant={connectedWallet ? "default" : "outline"}
+            variant="ghost"
             size="icon"
-            onClick={handleConnectWallet}
-            data-testid="button-connect-wallet"
+            onClick={() => {
+              if (connectedWallet) {
+                navigator.clipboard.writeText(connectedWallet);
+                toast({ title: "Address Copied", duration: 1500 });
+              } else {
+                handleConnectWallet();
+              }
+            }}
+            data-testid="button-copy-address"
           >
-            <Wallet className="h-4 w-4" />
+            <Copy className="h-4 w-4" />
           </Button>
         </div>
-
       </div>
 
       {/* Browser content */}
