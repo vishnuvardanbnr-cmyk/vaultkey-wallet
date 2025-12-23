@@ -4,12 +4,16 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.util.TypedValue;
+import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -18,6 +22,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
@@ -37,6 +42,8 @@ public class DAppBrowserPlugin extends Plugin {
     private String currentAddress = "";
     private int currentChainId = 1;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
+    private int headerHeightPx = 0;
+    private int footerHeightPx = 0;
 
     @PluginMethod
     public void open(PluginCall call) {
@@ -66,17 +73,7 @@ public class DAppBrowserPlugin extends Plugin {
     public void close(PluginCall call) {
         mainHandler.post(() -> {
             try {
-                if (container != null && webView != null) {
-                    container.removeView(webView);
-                    webView.destroy();
-                    webView = null;
-                    
-                    ViewGroup parent = (ViewGroup) container.getParent();
-                    if (parent != null) {
-                        parent.removeView(container);
-                    }
-                    container = null;
-                }
+                destroyWebView();
             } catch (Exception e) {
                 Log.e(TAG, "Error closing browser", e);
             }
@@ -85,6 +82,28 @@ public class DAppBrowserPlugin extends Plugin {
             ret.put("success", true);
             call.resolve(ret);
         });
+    }
+
+    private void destroyWebView() {
+        if (webView != null) {
+            webView.stopLoading();
+            webView.loadUrl("about:blank");
+            webView.clearHistory();
+            webView.removeAllViews();
+            if (container != null) {
+                container.removeView(webView);
+            }
+            webView.destroy();
+            webView = null;
+        }
+        
+        if (container != null) {
+            ViewGroup parent = (ViewGroup) container.getParent();
+            if (parent != null) {
+                parent.removeView(container);
+            }
+            container = null;
+        }
     }
 
     @PluginMethod
@@ -126,7 +145,7 @@ public class DAppBrowserPlugin extends Plugin {
         
         String script;
         if (!error.isEmpty()) {
-            String escapedError = error.replace("\\", "\\\\").replace("'", "\\'");
+            String escapedError = error.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ");
             script = "(function(){" +
                 "if(window._vkCallbacks&&window._vkCallbacks[" + id + "]){" +
                 "window._vkCallbacks[" + id + "].reject(new Error('" + escapedError + "'));" +
@@ -160,40 +179,31 @@ public class DAppBrowserPlugin extends Plugin {
         Activity activity = getActivity();
         if (activity == null) return;
 
-        int headerHeightPx = (int) TypedValue.applyDimension(
+        destroyWebView();
+
+        headerHeightPx = (int) TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP, 56, activity.getResources().getDisplayMetrics());
-        int footerHeightPx = (int) TypedValue.applyDimension(
+        footerHeightPx = (int) TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP, 72, activity.getResources().getDisplayMetrics());
 
         container = new FrameLayout(activity);
+        container.setBackgroundColor(Color.WHITE);
         FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         );
         containerParams.setMargins(0, headerHeightPx, 0, footerHeightPx);
         container.setLayoutParams(containerParams);
+        container.setVisibility(View.VISIBLE);
 
         webView = new WebView(activity);
+        webView.setBackgroundColor(Color.WHITE);
         webView.setLayoutParams(new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(true);
-        settings.setLoadsImagesAutomatically(true);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        
-        String ua = settings.getUserAgentString();
-        if (!ua.contains("Trust")) {
-            settings.setUserAgentString(ua.replace("; wv", "") + " Trust/Android");
-        }
-
+        configureWebSettings(webView);
         webView.addJavascriptInterface(new WalletBridge(), "VaultKeyNative");
 
         String injectionScript = buildInjectionScript();
@@ -203,7 +213,6 @@ public class DAppBrowserPlugin extends Plugin {
                 HashSet<String> origins = new HashSet<>();
                 origins.add("*");
                 WebViewCompat.addDocumentStartJavaScript(webView, injectionScript, origins);
-                Log.d(TAG, "Document-start injection enabled");
             } catch (Exception e) {
                 Log.e(TAG, "Document-start injection failed", e);
             }
@@ -216,7 +225,7 @@ public class DAppBrowserPlugin extends Plugin {
                 try {
                     view.evaluateJavascript(injectionScript, null);
                 } catch (Exception e) {
-                    Log.e(TAG, "Injection error onPageStarted", e);
+                    Log.e(TAG, "Injection error", e);
                 }
                 
                 JSObject event = new JSObject();
@@ -231,7 +240,7 @@ public class DAppBrowserPlugin extends Plugin {
                 try {
                     view.evaluateJavascript(injectionScript, null);
                 } catch (Exception e) {
-                    Log.e(TAG, "Injection error onPageFinished", e);
+                    Log.e(TAG, "Injection error", e);
                 }
                 
                 JSObject event = new JSObject();
@@ -250,13 +259,27 @@ public class DAppBrowserPlugin extends Plugin {
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(reqUrl));
                     activity.startActivity(intent);
                 } catch (Exception e) {
-                    Log.e(TAG, "Cannot open URL: " + reqUrl);
+                    Log.e(TAG, "Cannot open: " + reqUrl);
                 }
                 return true;
             }
         });
 
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
+                WebView.HitTestResult result = view.getHitTestResult();
+                String url = result.getExtra();
+                if (url != null) {
+                    view.loadUrl(url);
+                }
+                return false;
+            }
+        });
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        }
 
         container.addView(webView);
         
@@ -264,6 +287,51 @@ public class DAppBrowserPlugin extends Plugin {
         rootView.addView(container);
 
         webView.loadUrl(url);
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void configureWebSettings(WebView webView) {
+        WebSettings settings = webView.getSettings();
+        
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setSupportZoom(true);
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
+        
+        settings.setSupportMultipleWindows(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
+        
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(true);
+        settings.setLoadsImagesAutomatically(true);
+        settings.setBlockNetworkImage(false);
+        settings.setBlockNetworkLoads(false);
+        
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            CookieManager cookieManager = CookieManager.getInstance();
+            cookieManager.setAcceptCookie(true);
+            cookieManager.setAcceptThirdPartyCookies(webView, true);
+        }
+        
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+            try {
+                WebSettingsCompat.setForceDark(settings, WebSettingsCompat.FORCE_DARK_OFF);
+            } catch (Exception e) {
+                Log.e(TAG, "Force dark error", e);
+            }
+        }
+        
+        String ua = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 Trust/Android";
+        settings.setUserAgentString(ua);
     }
 
     private String buildInjectionScript() {
@@ -311,7 +379,6 @@ public class DAppBrowserPlugin extends Plugin {
             "" +
             "P.prototype.request=function(args){" +
             "var s=this,m=args.method,p=args.params||[];" +
-            "console.log('[VK]',m);" +
             "" +
             "if(m==='eth_accounts'||m==='eth_requestAccounts'){s.emit('connect',{chainId:cid});return Promise.resolve([addr]);}" +
             "if(m==='eth_chainId')return Promise.resolve(cid);" +
@@ -345,7 +412,7 @@ public class DAppBrowserPlugin extends Plugin {
             "" +
             "function announce(){" +
             "try{" +
-            "var d={info:{uuid:'vk-'+Date.now(),name:'VaultKey',icon:'data:image/svg+xml;charset=utf-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect fill=%22%233b82f6%22 width=%2240%22 height=%2240%22 rx=%228%22/%3E%3Cpath fill=%22white%22 d=%22M20 8l8 6v12l-8 6-8-6V14z%22/%3E%3C/svg%3E',rdns:'app.vaultkey.wallet'},provider:p};" +
+            "var d={info:{uuid:'vaultkey-'+Date.now(),name:'VaultKey',icon:'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect fill=%22%233b82f6%22 width=%2240%22 height=%2240%22 rx=%228%22/%3E%3Cpath fill=%22white%22 d=%22M20 8l8 6v12l-8 6-8-6V14z%22/%3E%3C/svg%3E',rdns:'app.vaultkey.wallet'},provider:p};" +
             "window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:Object.freeze(d)}));" +
             "}catch(e){}" +
             "}" +
@@ -355,7 +422,6 @@ public class DAppBrowserPlugin extends Plugin {
             "setTimeout(announce,100);" +
             "setTimeout(announce,500);" +
             "window.dispatchEvent(new Event('ethereum#initialized'));" +
-            "console.log('[VK] Injected',addr,cid);" +
             "})();";
     }
 
@@ -367,8 +433,6 @@ public class DAppBrowserPlugin extends Plugin {
                 int id = json.getInt("id");
                 String method = json.getString("method");
                 String params = json.optString("params", "[]");
-                
-                Log.d(TAG, "WalletBridge: id=" + id + ", method=" + method);
                 
                 JSObject event = new JSObject();
                 event.put("id", id);
@@ -384,10 +448,7 @@ public class DAppBrowserPlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         try {
-            if (webView != null) {
-                webView.destroy();
-                webView = null;
-            }
+            destroyWebView();
         } catch (Exception e) {
             Log.e(TAG, "Error in handleOnDestroy", e);
         }
