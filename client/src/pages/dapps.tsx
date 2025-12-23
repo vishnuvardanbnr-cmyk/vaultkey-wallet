@@ -118,23 +118,17 @@ export default function DApps() {
       });
     });
 
+    nativeDAppBrowser.setOnDisconnect(() => {
+      setConnectedWallet(null);
+    });
+
     const success = await nativeDAppBrowser.open(targetUrl, address, selectedChainId);
     
     if (success) {
       setIsNativeBrowserOpen(true);
       setConnectedWallet(address);
-      toast({
-        title: "DApp Browser Opened",
-        description: "Web3 provider injected. All wallets will connect to VaultKey.",
-        duration: 3000,
-      });
     } else {
       setIsLoading(false);
-      toast({
-        title: "Failed to Open",
-        description: "Could not open native browser",
-        variant: "destructive",
-      });
     }
   };
 
