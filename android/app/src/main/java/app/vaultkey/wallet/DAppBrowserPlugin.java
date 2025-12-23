@@ -411,13 +411,34 @@ public class DAppBrowserPlugin extends Plugin {
             "    }" +
             "  });" +
             "  " +
+            "  const announceEIP6963 = function() {" +
+            "    const info = {" +
+            "      uuid: 'vaultkey-wallet-' + Date.now()," +
+            "      name: 'VaultKey'," +
+            "      icon: 'data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 40 40\"><rect fill=\"%233b82f6\" width=\"40\" height=\"40\" rx=\"8\"/><path fill=\"white\" d=\"M20 8l8 6v12l-8 6-8-6V14z\"/></svg>'," +
+            "      rdns: 'app.vaultkey.wallet'" +
+            "    };" +
+            "    const detail = Object.freeze({ info: Object.freeze(info), provider: provider });" +
+            "    window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail }));" +
+            "  };" +
+            "  " +
+            "  window.addEventListener('eip6963:requestProvider', function() {" +
+            "    announceEIP6963();" +
+            "  });" +
+            "  " +
             "  setTimeout(function() {" +
             "    window.dispatchEvent(new Event('ethereum#initialized'));" +
-            "    if (window.ethereum._events['connect']) {" +
+            "    announceEIP6963();" +
+            "    if (window.ethereum._events && window.ethereum._events['connect']) {" +
             "      window.ethereum.emit('connect', { chainId: window.ethereum.chainId });" +
             "    }" +
-            "  }, 0);" +
-            "  console.log('[VaultKey] Web3 provider injected - isMetaMask:', provider.isMetaMask, 'isTrust:', provider.isTrust);" +
+            "  }, 1);" +
+            "  " +
+            "  // Re-announce periodically in case DApp loads late" +
+            "  setTimeout(announceEIP6963, 100);" +
+            "  setTimeout(announceEIP6963, 500);" +
+            "  setTimeout(announceEIP6963, 1000);" +
+            "  console.log('[VaultKey] Web3 provider injected with EIP-6963 - isMetaMask:', provider.isMetaMask, 'isTrust:', provider.isTrust);" +
             "})();",
             address, chainId
         );
