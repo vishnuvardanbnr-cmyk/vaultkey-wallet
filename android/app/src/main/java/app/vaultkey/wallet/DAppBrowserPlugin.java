@@ -412,14 +412,16 @@ public class DAppBrowserPlugin extends Plugin {
             "  });" +
             "  " +
             "  const announceEIP6963 = function() {" +
-            "    const info = {" +
-            "      uuid: 'vaultkey-wallet-' + Date.now()," +
-            "      name: 'VaultKey'," +
-            "      icon: 'data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 40 40\"><rect fill=\"%233b82f6\" width=\"40\" height=\"40\" rx=\"8\"/><path fill=\"white\" d=\"M20 8l8 6v12l-8 6-8-6V14z\"/></svg>'," +
-            "      rdns: 'app.vaultkey.wallet'" +
-            "    };" +
-            "    const detail = Object.freeze({ info: Object.freeze(info), provider: provider });" +
-            "    window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail }));" +
+            "    try {" +
+            "      const info = {" +
+            "        uuid: 'vaultkey-wallet-' + Date.now()," +
+            "        name: 'VaultKey'," +
+            "        icon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAhGVYSWZNTQAqAAAACAAFARIAAwAAAAEAAQAAARoABQAAAAEAAABKARsABQAAAAEAAABSASgAAwAAAAEAAgAAh2kABAAAAAEAAABaAAAAAAAAAEgAAAABAAAASAAAAAEAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAKKADAAQAAAABAAAAKAAAAADzLqNFAAAACXBIWXMAAAsTAAALEwEAmpwYAAABWWlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iWE1QIENvcmUgNi4wLjAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczp0aWZmPSJodHRwOi8vbnMuYWRvYmUuY29tL3RpZmYvMS4wLyI+CiAgICAgICAgIDx0aWZmOk9yaWVudGF0aW9uPjE8L3RpZmY6T3JpZW50YXRpb24+CiAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgoZXuEHAAABqElEQVRYCe2YsU7DMBCGnUJXxMrIY/AILKy8CYI34A1gYmFhZWRFLMAjgFSJGTqAWn/Ff8p1OTs+O1WQ/kh1fL47/3ecOG4cx5EA/3cCg3/TH+b/rIQABCAAAQhAAAIQgAAEIAABCEBgTwT6+xIe5WVn/7zMH2bmOy0/nOfP8k/nBbW8f1x/mj/K0p1OuUx/kj/LX51nl/le/lZ/lr8qr2rl/bP6k/y1eM/D7s/yz/J1R7uW94/qT/I3B/Vcfz6qP8nXXexY3j+pP8lfHNJz/Pmofi1fd7Bjef+k/iR/cUjP8eej+pP8xSE9x5+P6k/y9Qc7lveP6k/yF4f0HH8+ql/L1x3sWN4/qT/J35xXc/35qH4tX3ewY3n/pH4tf3VIz/Hno/q1fN3BjuX9k/q1/NUhPcefj+rX8nUHO5b3T+rX8leH9Bx/PqpfyzcdaD/eP6lfy98c1HP8+ah+LV93sGN5/6R+LX91SM/x56P6tXzdwY7l/ZP6tfzVIT3Hn4/q1/J1BzuW90/q1/JXh/Qcfz6qX8vXHexY3j+pX8v/A/ADmpE='," +
+            "        rdns: 'app.vaultkey.wallet'" +
+            "      };" +
+            "      const detail = Object.freeze({ info: Object.freeze(info), provider: provider });" +
+            "      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail }));" +
+            "    } catch(e) { console.log('[VaultKey] EIP-6963 error:', e); }" +
             "  };" +
             "  " +
             "  window.addEventListener('eip6963:requestProvider', function() {" +
