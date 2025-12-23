@@ -253,7 +253,14 @@ export default function DApps() {
           <Button 
             variant="ghost" 
             size="icon"
-            onClick={isNativeBrowserOpen ? closeNativeBrowser : () => window.history.back()}
+            onClick={() => {
+              if (isNativeBrowserOpen) {
+                closeNativeBrowser();
+              } else if (currentUrl) {
+                setCurrentUrl("");
+                setUrl("");
+              }
+            }}
             data-testid="button-back"
           >
             <ArrowLeft className="h-4 w-4" />
