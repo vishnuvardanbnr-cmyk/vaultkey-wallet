@@ -131,9 +131,12 @@ public class DAppBrowserPlugin extends Plugin {
         
         if (webView != null) {
             String hexChainId = "0x" + Integer.toHexString(currentChainId);
+            // Call the exposed __vkUpdate function to update closure state
             String updateScript = 
                 "(function(){" +
-                "if(window.ethereum){" +
+                "if(window.__vkUpdate){" +
+                "window.__vkUpdate('" + currentAddress + "','" + hexChainId + "','" + rpcUrl + "');" +
+                "}else if(window.ethereum){" +
                 "window.ethereum.selectedAddress='" + currentAddress + "';" +
                 "window.ethereum.chainId='" + hexChainId + "';" +
                 "window.ethereum._rpcUrl='" + rpcUrl + "';" +
@@ -640,6 +643,21 @@ public class DAppBrowserPlugin extends Plugin {
             "};" +
             
             "provider.providers.push(provider);" +
+            
+            // Expose update function to allow native code to update closure state
+            "window.__vkUpdate=function(newAddr,newChainId,newRpcUrl){" +
+            "_addr=newAddr;" +
+            "_chainId=newChainId;" +
+            "_netVersion=String(parseInt(newChainId,16));" +
+            "_rpcUrl=newRpcUrl;" +
+            "provider.selectedAddress=_addr;" +
+            "provider.chainId=_chainId;" +
+            "provider.networkVersion=_netVersion;" +
+            "provider._rpcUrl=_rpcUrl;" +
+            "emit('accountsChanged',[_addr]);" +
+            "emit('chainChanged',_chainId);" +
+            "console.log('[VaultKey] State updated:',_chainId,_addr?_addr.slice(0,10)+'...':'none');" +
+            "};" +
             
             // Install provider without breaking existing window.ethereum
             "try{" +
