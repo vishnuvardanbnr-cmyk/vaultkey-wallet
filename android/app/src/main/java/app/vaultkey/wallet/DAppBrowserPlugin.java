@@ -21,6 +21,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 
 import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewCompat;
@@ -39,17 +41,18 @@ public class DAppBrowserPlugin extends Plugin {
     private static final String TAG = "DAppBrowserPlugin";
     private WebView webView;
     private FrameLayout container;
+    private ProgressBar progressBar;
     private String currentAddress = "";
     private int currentChainId = 1;
+    private String rpcUrl = "https://eth.llamarpc.com";
     private Handler mainHandler = new Handler(Looper.getMainLooper());
-    private int headerHeightPx = 0;
-    private int footerHeightPx = 0;
 
     @PluginMethod
     public void open(PluginCall call) {
         String url = call.getString("url", "");
         currentAddress = call.getString("address", "");
         currentChainId = call.getInt("chainId", 1);
+        rpcUrl = getRpcUrl(currentChainId);
         
         if (url.isEmpty()) {
             call.reject("URL is required");
@@ -67,6 +70,19 @@ public class DAppBrowserPlugin extends Plugin {
                 call.reject("Failed to open browser: " + e.getMessage());
             }
         });
+    }
+
+    private String getRpcUrl(int chainId) {
+        switch (chainId) {
+            case 1: return "https://eth.llamarpc.com";
+            case 56: return "https://bsc-dataseed1.binance.org";
+            case 137: return "https://polygon-rpc.com";
+            case 43114: return "https://api.avax.network/ext/bc/C/rpc";
+            case 42161: return "https://arb1.arbitrum.io/rpc";
+            case 10: return "https://mainnet.optimism.io";
+            case 8453: return "https://mainnet.base.org";
+            default: return "https://eth.llamarpc.com";
+        }
     }
 
     @PluginMethod
@@ -104,12 +120,14 @@ public class DAppBrowserPlugin extends Plugin {
             }
             container = null;
         }
+        progressBar = null;
     }
 
     @PluginMethod
     public void updateAccount(PluginCall call) {
         currentAddress = call.getString("address", currentAddress);
         currentChainId = call.getInt("chainId", currentChainId);
+        rpcUrl = getRpcUrl(currentChainId);
         
         if (webView != null) {
             String hexChainId = "0x" + Integer.toHexString(currentChainId);
@@ -118,6 +136,7 @@ public class DAppBrowserPlugin extends Plugin {
                 "if(window.ethereum){" +
                 "window.ethereum.selectedAddress='" + currentAddress + "';" +
                 "window.ethereum.chainId='" + hexChainId + "';" +
+                "window.ethereum._rpcUrl='" + rpcUrl + "';" +
                 "if(window.ethereum.emit){" +
                 "window.ethereum.emit('accountsChanged',['" + currentAddress + "']);" +
                 "window.ethereum.emit('chainChanged','" + hexChainId + "');" +
@@ -145,7 +164,7 @@ public class DAppBrowserPlugin extends Plugin {
         
         String script;
         if (!error.isEmpty()) {
-            String escapedError = error.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ");
+            String escapedError = error.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ").replace("\r", "");
             script = "(function(){" +
                 "if(window._vkCallbacks&&window._vkCallbacks[" + id + "]){" +
                 "window._vkCallbacks[" + id + "].reject(new Error('" + escapedError + "'));" +
@@ -181,27 +200,35 @@ public class DAppBrowserPlugin extends Plugin {
 
         destroyWebView();
 
-        headerHeightPx = (int) TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP, 56, activity.getResources().getDisplayMetrics());
-        footerHeightPx = (int) TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP, 72, activity.getResources().getDisplayMetrics());
+        float density = activity.getResources().getDisplayMetrics().density;
+        int headerHeightPx = (int) (100 * density);
+        int footerHeightPx = (int) (80 * density);
 
         container = new FrameLayout(activity);
-        container.setBackgroundColor(Color.WHITE);
+        container.setBackgroundColor(Color.parseColor("#f5f5f5"));
         FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         );
         containerParams.setMargins(0, headerHeightPx, 0, footerHeightPx);
         container.setLayoutParams(containerParams);
-        container.setVisibility(View.VISIBLE);
+
+        progressBar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setLayoutParams(new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (int) (3 * density)
+        ));
+        progressBar.setIndeterminate(true);
+        container.addView(progressBar);
 
         webView = new WebView(activity);
         webView.setBackgroundColor(Color.WHITE);
-        webView.setLayoutParams(new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams webViewParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
-        ));
+        );
+        webViewParams.setMargins(0, (int)(3 * density), 0, 0);
+        webView.setLayoutParams(webViewParams);
 
         configureWebSettings(webView);
         webView.addJavascriptInterface(new WalletBridge(), "VaultKeyNative");
@@ -222,6 +249,7 @@ public class DAppBrowserPlugin extends Plugin {
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
+                if (progressBar != null) progressBar.setVisibility(View.VISIBLE);
                 try {
                     view.evaluateJavascript(injectionScript, null);
                 } catch (Exception e) {
@@ -237,8 +265,10 @@ public class DAppBrowserPlugin extends Plugin {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
+                if (progressBar != null) progressBar.setVisibility(View.GONE);
                 try {
                     view.evaluateJavascript(injectionScript, null);
+                    view.evaluateJavascript("(function(){if(window.ethereum){window.dispatchEvent(new Event('ethereum#initialized'));console.log('[VK] Re-announced');}})();", null);
                 } catch (Exception e) {
                     Log.e(TAG, "Injection error", e);
                 }
@@ -266,6 +296,16 @@ public class DAppBrowserPlugin extends Plugin {
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onProgressChanged(WebView view, int newProgress) {
+                if (progressBar != null) {
+                    progressBar.setProgress(newProgress);
+                    if (newProgress >= 100) {
+                        progressBar.setVisibility(View.GONE);
+                    }
+                }
+            }
+            
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
                 WebView.HitTestResult result = view.getHitTestResult();
@@ -345,6 +385,13 @@ public class DAppBrowserPlugin extends Plugin {
             "var addr='" + currentAddress + "';" +
             "var cid='" + hexChainId + "';" +
             "var nv='" + currentChainId + "';" +
+            "var rpc='" + rpcUrl + "';" +
+            "" +
+            "function rpcCall(m,p){" +
+            "return fetch(rpc,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:Date.now(),method:m,params:p||[]})})" +
+            ".then(function(r){return r.json();})" +
+            ".then(function(d){if(d.error)throw new Error(d.error.message);return d.result;});" +
+            "}" +
             "" +
             "function P(){" +
             "this.isMetaMask=true;" +
@@ -354,28 +401,19 @@ public class DAppBrowserPlugin extends Plugin {
             "this.chainId=cid;" +
             "this.networkVersion=nv;" +
             "this.selectedAddress=addr;" +
+            "this._rpcUrl=rpc;" +
             "this._events={};" +
             "this._metamask={isUnlocked:function(){return Promise.resolve(true);}};" +
             "}" +
             "" +
             "P.prototype.isConnected=function(){return true;};" +
             "" +
-            "P.prototype.on=function(e,c){" +
-            "if(!this._events[e])this._events[e]=[];" +
-            "this._events[e].push(c);" +
-            "return this;" +
-            "};" +
-            "" +
+            "P.prototype.on=function(e,c){if(!this._events[e])this._events[e]=[];this._events[e].push(c);return this;};" +
             "P.prototype.once=function(e,c){var s=this;var w=function(){s.removeListener(e,w);c.apply(this,arguments);};return this.on(e,w);};" +
             "P.prototype.off=function(e,c){return this.removeListener(e,c);};" +
             "P.prototype.removeListener=function(e,c){if(this._events[e])this._events[e]=this._events[e].filter(function(x){return x!==c;});return this;};" +
             "P.prototype.removeAllListeners=function(e){if(e)this._events[e]=[];else this._events={};return this;};" +
-            "" +
-            "P.prototype.emit=function(e){" +
-            "var a=Array.prototype.slice.call(arguments,1);" +
-            "if(this._events[e])this._events[e].forEach(function(c){try{c.apply(null,a);}catch(x){}});" +
-            "return true;" +
-            "};" +
+            "P.prototype.emit=function(e){var a=Array.prototype.slice.call(arguments,1);if(this._events[e])this._events[e].forEach(function(c){try{c.apply(null,a);}catch(x){}});return true;};" +
             "" +
             "P.prototype.request=function(args){" +
             "var s=this,m=args.method,p=args.params||[];" +
@@ -390,6 +428,9 @@ public class DAppBrowserPlugin extends Plugin {
             "if(m==='wallet_addEthereumChain')return Promise.resolve(null);" +
             "if(m==='wallet_watchAsset')return Promise.resolve(true);" +
             "" +
+            "var rpcMethods=['eth_blockNumber','eth_getBlockByNumber','eth_getBlockByHash','eth_call','eth_getBalance','eth_getCode','eth_getStorageAt','eth_getTransactionCount','eth_getTransactionByHash','eth_getTransactionReceipt','eth_getLogs','eth_estimateGas','eth_gasPrice','eth_feeHistory','eth_maxPriorityFeePerGas','eth_getBlockTransactionCountByHash','eth_getBlockTransactionCountByNumber','eth_getUncleCountByBlockHash','eth_getUncleCountByBlockNumber','eth_protocolVersion','eth_syncing','net_listening','net_peerCount','web3_clientVersion','web3_sha3'];" +
+            "if(rpcMethods.indexOf(m)>=0){return rpcCall(m,p);}" +
+            "" +
             "return new Promise(function(res,rej){" +
             "var i=_id++;" +
             "window._vkCallbacks[i]={resolve:res,reject:rej};" +
@@ -399,8 +440,8 @@ public class DAppBrowserPlugin extends Plugin {
             "};" +
             "" +
             "P.prototype.enable=function(){return this.request({method:'eth_requestAccounts'});};" +
-            "P.prototype.send=function(a,b){if(typeof a==='string')return this.request({method:a,params:b});if(typeof b==='function'){this.request({method:a.method,params:a.params}).then(function(r){b(null,{id:a.id,jsonrpc:'2.0',result:r});}).catch(b);return;}return this.request({method:a.method,params:a.params});};" +
-            "P.prototype.sendAsync=function(a,b){this.request({method:a.method,params:a.params}).then(function(r){b(null,{id:a.id,jsonrpc:'2.0',result:r});}).catch(b);};" +
+            "P.prototype.send=function(a,b){if(typeof a==='string')return this.request({method:a,params:b});if(typeof b==='function'){this.request({method:a.method,params:a.params}).then(function(r){b(null,{id:a.id,jsonrpc:'2.0',result:r});}).catch(function(e){b(e);});return;}return this.request({method:a.method,params:a.params});};" +
+            "P.prototype.sendAsync=function(a,b){this.request({method:a.method,params:a.params}).then(function(r){b(null,{id:a.id,jsonrpc:'2.0',result:r});}).catch(function(e){b(e);});};" +
             "" +
             "var p=new P();" +
             "p.providers=[p];" +
