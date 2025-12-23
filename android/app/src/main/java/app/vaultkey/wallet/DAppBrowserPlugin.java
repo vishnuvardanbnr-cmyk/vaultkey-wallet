@@ -3,19 +3,17 @@ package app.vaultkey.wallet;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.util.TypedValue;
-import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -30,31 +28,60 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import java.io.ByteArrayInputStream;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 
 @CapacitorPlugin(name = "DAppBrowser")
 public class DAppBrowserPlugin extends Plugin {
     private static final String TAG = "DAppBrowserPlugin";
     private WebView webView;
     private FrameLayout container;
-    private String injectionScript = "";
+    private String trustProviderScript = "";
     private String currentAddress = "";
     private int currentChainId = 1;
+    private String rpcUrl = "https://eth.llamarpc.com";
     private Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Map<Integer, Long> pendingCallbacks = new HashMap<>();
+
+    @Override
+    public void load() {
+        super.load();
+        loadTrustProvider();
+    }
+
+    private void loadTrustProvider() {
+        try {
+            AssetManager assets = getContext().getAssets();
+            InputStream is = assets.open("trust-provider.js");
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+            reader.close();
+            trustProviderScript = sb.toString();
+            Log.d(TAG, "Trust provider loaded: " + trustProviderScript.length() + " bytes");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to load trust-provider.js", e);
+        }
+    }
 
     @PluginMethod
     public void open(PluginCall call) {
         String url = call.getString("url", "");
         currentAddress = call.getString("address", "");
         currentChainId = call.getInt("chainId", 1);
+        rpcUrl = getRpcUrl(currentChainId);
         
         if (url.isEmpty()) {
             call.reject("URL is required");
             return;
         }
-
-        injectionScript = generateInjectionScript(currentAddress, currentChainId);
 
         mainHandler.post(() -> {
             try {
@@ -67,6 +94,19 @@ public class DAppBrowserPlugin extends Plugin {
                 call.reject("Failed to open browser: " + e.getMessage());
             }
         });
+    }
+
+    private String getRpcUrl(int chainId) {
+        switch (chainId) {
+            case 1: return "https://eth.llamarpc.com";
+            case 56: return "https://bsc-dataseed.binance.org";
+            case 137: return "https://polygon-rpc.com";
+            case 43114: return "https://api.avax.network/ext/bc/C/rpc";
+            case 42161: return "https://arb1.arbitrum.io/rpc";
+            case 10: return "https://mainnet.optimism.io";
+            case 8453: return "https://mainnet.base.org";
+            default: return "https://eth.llamarpc.com";
+        }
     }
 
     @PluginMethod
@@ -83,6 +123,7 @@ public class DAppBrowserPlugin extends Plugin {
                 }
                 container = null;
             }
+            pendingCallbacks.clear();
             
             JSObject ret = new JSObject();
             ret.put("success", true);
@@ -94,17 +135,22 @@ public class DAppBrowserPlugin extends Plugin {
     public void updateAccount(PluginCall call) {
         currentAddress = call.getString("address", currentAddress);
         currentChainId = call.getInt("chainId", currentChainId);
+        rpcUrl = getRpcUrl(currentChainId);
         
         if (webView != null) {
+            String hexChainId = "0x" + Integer.toHexString(currentChainId);
             String updateScript = String.format(
-                "if (window.ethereum && window.ethereum.isVaultKey) { " +
-                "  window.ethereum.selectedAddress = '%s'; " +
-                "  window.ethereum.chainId = '0x%x'; " +
-                "  window.ethereum.networkVersion = '%d'; " +
-                "  window.ethereum.emit('accountsChanged', ['%s']); " +
-                "  window.ethereum.emit('chainChanged', '0x%x'); " +
-                "}",
-                currentAddress, currentChainId, currentChainId, currentAddress, currentChainId
+                "(function() {" +
+                "  if (window.ethereum) {" +
+                "    window.ethereum.address = '%s';" +
+                "    window.ethereum.chainId = '%s';" +
+                "    if (window.ethereum.emit) {" +
+                "      window.ethereum.emit('accountsChanged', ['%s']);" +
+                "      window.ethereum.emit('chainChanged', '%s');" +
+                "    }" +
+                "  }" +
+                "})();",
+                currentAddress, hexChainId, currentAddress, hexChainId
             );
             
             mainHandler.post(() -> {
@@ -126,13 +172,21 @@ public class DAppBrowserPlugin extends Plugin {
         String script;
         if (!error.isEmpty()) {
             script = String.format(
+                "if (window.trustCallbacks && window.trustCallbacks[%d]) {" +
+                "  window.trustCallbacks[%d].reject(new Error('%s'));" +
+                "  delete window.trustCallbacks[%d];" +
+                "}" +
                 "window.dispatchEvent(new CustomEvent('vaultkey_response', { detail: { id: %d, error: { message: '%s' } } }));",
-                id, error.replace("'", "\\'")
+                id, id, error.replace("'", "\\'"), id, id, error.replace("'", "\\'")
             );
         } else {
             script = String.format(
+                "if (window.trustCallbacks && window.trustCallbacks[%d]) {" +
+                "  window.trustCallbacks[%d].resolve(%s);" +
+                "  delete window.trustCallbacks[%d];" +
+                "}" +
                 "window.dispatchEvent(new CustomEvent('vaultkey_response', { detail: { id: %d, result: %s } }));",
-                id, result
+                id, id, result, id, id, result
             );
         }
         
@@ -141,6 +195,7 @@ public class DAppBrowserPlugin extends Plugin {
                 webView.evaluateJavascript(script, null);
             });
         }
+        pendingCallbacks.remove(id);
         
         JSObject ret = new JSObject();
         ret.put("success", true);
@@ -179,14 +234,18 @@ public class DAppBrowserPlugin extends Plugin {
         settings.setAllowContentAccess(true);
         settings.setLoadsImagesAutomatically(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " VaultKeyWallet");
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setUserAgentString(settings.getUserAgentString().replace("; wv", "") + " Trust/Android");
 
-        webView.addJavascriptInterface(new WebAppInterface(), "VaultKeyBridge");
+        webView.addJavascriptInterface(new TrustBridge(), "trust");
+        webView.addJavascriptInterface(new VaultKeyBridge(), "VaultKeyBridge");
 
+        String fullInjectionScript = generateFullInjectionScript();
+        
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             HashSet<String> origins = new HashSet<>();
             origins.add("*");
-            WebViewCompat.addDocumentStartJavaScript(webView, injectionScript, origins);
+            WebViewCompat.addDocumentStartJavaScript(webView, fullInjectionScript, origins);
             Log.d(TAG, "Using document-start script injection");
         }
 
@@ -194,7 +253,7 @@ public class DAppBrowserPlugin extends Plugin {
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
-                view.evaluateJavascript(injectionScript, null);
+                view.evaluateJavascript(fullInjectionScript, null);
                 
                 JSObject event = new JSObject();
                 event.put("url", url);
@@ -205,7 +264,8 @@ public class DAppBrowserPlugin extends Plugin {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                view.evaluateJavascript(injectionScript, null);
+                view.evaluateJavascript(fullInjectionScript, null);
+                view.evaluateJavascript("setTimeout(function(){" + generateEIP6963Script() + "},100);", null);
                 
                 JSObject event = new JSObject();
                 event.put("url", url);
@@ -239,226 +299,291 @@ public class DAppBrowserPlugin extends Plugin {
         webView.loadUrl(url);
     }
 
-    private String generateInjectionScript(String address, int chainId) {
+    private String generateFullInjectionScript() {
+        String hexChainId = "0x" + Integer.toHexString(currentChainId);
+        
         return String.format(
             "(function() {" +
-            "  if (window.ethereum && window.ethereum.isVaultKey) return;" +
+            "  if (window._vaultKeyInjected) return;" +
+            "  window._vaultKeyInjected = true;" +
+            "  window.trustCallbacks = {};" +
+            "  var _callbackId = 1;" +
             "  " +
-            "  const currentAddress = '%s';" +
-            "  let currentChainId = %d;" +
-            "  let requestId = 0;" +
-            "  const pendingRequests = {};" +
+            "  var config = {" +
+            "    ethereum: {" +
+            "      address: '%s'," +
+            "      chainId: %d," +
+            "      rpcUrl: '%s'" +
+            "    }" +
+            "  };" +
             "  " +
-            "  class VaultKeyProvider {" +
-            "    constructor() {" +
-            "      this.isVaultKey = true;" +
-            "      this.isMetaMask = true;" +
-            "      this.isTrust = true;" +
-            "      this.isTrustWallet = true;" +
-            "      this.isCoinbaseWallet = false;" +
-            "      this.isConnected = () => true;" +
-            "      this.chainId = '0x' + currentChainId.toString(16);" +
-            "      this.networkVersion = currentChainId.toString();" +
-            "      this.selectedAddress = currentAddress;" +
-            "      this._events = {};" +
-            "      this._metamask = { isUnlocked: () => Promise.resolve(true) };" +
-            "    }" +
-            "    " +
-            "    on(event, callback) {" +
-            "      if (!this._events[event]) this._events[event] = [];" +
-            "      this._events[event].push(callback);" +
-            "      return this;" +
-            "    }" +
-            "    " +
-            "    removeListener(event, callback) {" +
-            "      if (this._events[event]) {" +
-            "        this._events[event] = this._events[event].filter(cb => cb !== callback);" +
-            "      }" +
-            "      return this;" +
-            "    }" +
-            "    " +
-            "    removeAllListeners(event) {" +
-            "      if (event) { this._events[event] = []; } else { this._events = {}; }" +
-            "      return this;" +
-            "    }" +
-            "    " +
-            "    emit(event, ...args) {" +
-            "      if (this._events[event]) {" +
-            "        this._events[event].forEach(cb => { try { cb(...args); } catch(e) {} });" +
-            "      }" +
-            "    }" +
-            "    " +
-            "    async request({ method, params }) {" +
-            "      const id = ++requestId;" +
-            "      console.log('[VaultKey] Request:', method, params);" +
-            "      " +
-            "      if (method === 'eth_requestAccounts' || method === 'eth_accounts') {" +
-            "        console.log('[VaultKey] Returning accounts:', [currentAddress]);" +
-            "        this.emit('connect', { chainId: this.chainId });" +
-            "        return [currentAddress];" +
-            "      }" +
-            "      if (method === 'eth_chainId') {" +
-            "        return this.chainId;" +
-            "      }" +
-            "      if (method === 'net_version') {" +
-            "        return this.networkVersion;" +
-            "      }" +
-            "      if (method === 'wallet_switchEthereumChain') {" +
-            "        const reqChainId = params && params[0] && params[0].chainId;" +
-            "        if (reqChainId) {" +
-            "          currentChainId = parseInt(reqChainId, 16);" +
-            "          this.chainId = reqChainId;" +
-            "          this.networkVersion = currentChainId.toString();" +
-            "          this.emit('chainChanged', reqChainId);" +
-            "        }" +
-            "        return null;" +
-            "      }" +
-            "      if (method === 'wallet_addEthereumChain') {" +
-            "        return null;" +
-            "      }" +
-            "      if (method === 'eth_coinbase') {" +
-            "        return currentAddress;" +
-            "      }" +
-            "      " +
-            "      return new Promise((resolve, reject) => {" +
-            "        pendingRequests[id] = { resolve, reject, method };" +
-            "        " +
-            "        window.VaultKeyBridge.postMessage(JSON.stringify({" +
-            "          id: id," +
-            "          method: method," +
-            "          params: params || []" +
-            "        }));" +
-            "        " +
-            "        setTimeout(() => {" +
-            "          if (pendingRequests[id]) {" +
-            "            delete pendingRequests[id];" +
-            "            reject(new Error('Request timed out'));" +
-            "          }" +
-            "        }, 120000);" +
-            "      });" +
-            "    }" +
-            "    " +
-            "    async enable() {" +
-            "      return this.request({ method: 'eth_requestAccounts' });" +
-            "    }" +
-            "    " +
-            "    send(methodOrPayload, paramsOrCallback) {" +
-            "      if (typeof methodOrPayload === 'string') {" +
-            "        return this.request({ method: methodOrPayload, params: paramsOrCallback });" +
-            "      }" +
-            "      if (typeof paramsOrCallback === 'function') {" +
-            "        this.request({ method: methodOrPayload.method, params: methodOrPayload.params })" +
-            "          .then(result => paramsOrCallback(null, { result }))" +
-            "          .catch(error => paramsOrCallback(error));" +
-            "        return;" +
-            "      }" +
-            "      return this.request({ method: methodOrPayload.method, params: methodOrPayload.params });" +
-            "    }" +
-            "    " +
-            "    sendAsync(payload, callback) {" +
-            "      this.request({ method: payload.method, params: payload.params })" +
-            "        .then(result => callback(null, { id: payload.id, jsonrpc: '2.0', result }))" +
-            "        .catch(error => callback(error));" +
-            "    }" +
+            "  function TrustProvider() {" +
+            "    this.isMetaMask = true;" +
+            "    this.isTrust = true;" +
+            "    this.isTrustWallet = true;" +
+            "    this.isVaultKey = true;" +
+            "    this.address = config.ethereum.address;" +
+            "    this.chainId = '%s';" +
+            "    this.networkVersion = '%d';" +
+            "    this.selectedAddress = config.ethereum.address;" +
+            "    this._events = {};" +
+            "    this._metamask = {" +
+            "      isUnlocked: function() { return Promise.resolve(true); }," +
+            "      requestBatch: function() { return Promise.resolve([]); }" +
+            "    };" +
+            "    this.providers = [this];" +
             "  }" +
             "  " +
-            "  const provider = new VaultKeyProvider();" +
+            "  TrustProvider.prototype.isConnected = function() { return true; };" +
             "  " +
-            "  // Delete any existing ethereum object first" +
+            "  TrustProvider.prototype.on = function(event, callback) {" +
+            "    if (!this._events[event]) this._events[event] = [];" +
+            "    this._events[event].push(callback);" +
+            "    return this;" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.once = function(event, callback) {" +
+            "    var self = this;" +
+            "    var wrapped = function() {" +
+            "      self.removeListener(event, wrapped);" +
+            "      callback.apply(this, arguments);" +
+            "    };" +
+            "    return this.on(event, wrapped);" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.off = function(event, callback) {" +
+            "    return this.removeListener(event, callback);" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.removeListener = function(event, callback) {" +
+            "    if (this._events[event]) {" +
+            "      this._events[event] = this._events[event].filter(function(cb) { return cb !== callback; });" +
+            "    }" +
+            "    return this;" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.removeAllListeners = function(event) {" +
+            "    if (event) { this._events[event] = []; } else { this._events = {}; }" +
+            "    return this;" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.emit = function(event) {" +
+            "    var args = Array.prototype.slice.call(arguments, 1);" +
+            "    if (this._events[event]) {" +
+            "      this._events[event].forEach(function(cb) {" +
+            "        try { cb.apply(null, args); } catch(e) { console.error('[VaultKey] emit error:', e); }" +
+            "      });" +
+            "    }" +
+            "    return true;" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.request = function(args) {" +
+            "    var self = this;" +
+            "    var method = args.method;" +
+            "    var params = args.params || [];" +
+            "    console.log('[VaultKey] request:', method, JSON.stringify(params));" +
+            "    " +
+            "    if (method === 'eth_accounts' || method === 'eth_requestAccounts') {" +
+            "      self.emit('connect', { chainId: self.chainId });" +
+            "      return Promise.resolve([self.address]);" +
+            "    }" +
+            "    if (method === 'eth_chainId') return Promise.resolve(self.chainId);" +
+            "    if (method === 'net_version') return Promise.resolve(self.networkVersion);" +
+            "    if (method === 'eth_coinbase') return Promise.resolve(self.address);" +
+            "    if (method === 'wallet_requestPermissions') {" +
+            "      return Promise.resolve([{ parentCapability: 'eth_accounts' }]);" +
+            "    }" +
+            "    if (method === 'wallet_getPermissions') {" +
+            "      return Promise.resolve([{ parentCapability: 'eth_accounts' }]);" +
+            "    }" +
+            "    if (method === 'wallet_switchEthereumChain') {" +
+            "      var chainId = params[0] && params[0].chainId;" +
+            "      if (chainId) {" +
+            "        self.chainId = chainId;" +
+            "        self.networkVersion = parseInt(chainId, 16).toString();" +
+            "        self.emit('chainChanged', chainId);" +
+            "      }" +
+            "      return Promise.resolve(null);" +
+            "    }" +
+            "    if (method === 'wallet_addEthereumChain') return Promise.resolve(null);" +
+            "    if (method === 'wallet_watchAsset') return Promise.resolve(true);" +
+            "    " +
+            "    return new Promise(function(resolve, reject) {" +
+            "      var id = _callbackId++;" +
+            "      window.trustCallbacks[id] = { resolve: resolve, reject: reject, method: method };" +
+            "      " +
+            "      try {" +
+            "        trust.signMessage(id, method, JSON.stringify(params));" +
+            "      } catch(e) {" +
+            "        console.error('[VaultKey] bridge error:', e);" +
+            "        delete window.trustCallbacks[id];" +
+            "        reject(e);" +
+            "      }" +
+            "      " +
+            "      setTimeout(function() {" +
+            "        if (window.trustCallbacks[id]) {" +
+            "          delete window.trustCallbacks[id];" +
+            "          reject(new Error('Request timeout'));" +
+            "        }" +
+            "      }, 120000);" +
+            "    });" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.enable = function() {" +
+            "    return this.request({ method: 'eth_requestAccounts' });" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.send = function(methodOrPayload, paramsOrCallback) {" +
+            "    if (typeof methodOrPayload === 'string') {" +
+            "      return this.request({ method: methodOrPayload, params: paramsOrCallback });" +
+            "    }" +
+            "    if (typeof paramsOrCallback === 'function') {" +
+            "      this.request({ method: methodOrPayload.method, params: methodOrPayload.params })" +
+            "        .then(function(r) { paramsOrCallback(null, { id: methodOrPayload.id, jsonrpc: '2.0', result: r }); })" +
+            "        .catch(function(e) { paramsOrCallback(e); });" +
+            "      return;" +
+            "    }" +
+            "    return this.request({ method: methodOrPayload.method, params: methodOrPayload.params });" +
+            "  };" +
+            "  " +
+            "  TrustProvider.prototype.sendAsync = function(payload, callback) {" +
+            "    this.request({ method: payload.method, params: payload.params })" +
+            "      .then(function(r) { callback(null, { id: payload.id, jsonrpc: '2.0', result: r }); })" +
+            "      .catch(function(e) { callback(e); });" +
+            "  };" +
+            "  " +
+            "  var provider = new TrustProvider();" +
+            "  " +
             "  try { delete window.ethereum; } catch(e) {}" +
-            "  try { delete window.trustwallet; } catch(e) {}" +
             "  try { delete window.web3; } catch(e) {}" +
-            "  " +
-            "  provider.providers = [provider];" +
             "  " +
             "  Object.defineProperty(window, 'ethereum', {" +
             "    value: provider," +
             "    writable: false," +
-            "    configurable: false," +
+            "    configurable: true," +
             "    enumerable: true" +
             "  });" +
             "  " +
-            "  window.ethereum.providers = [provider];" +
+            "  window.trustwallet = { ethereum: provider, provider: provider };" +
+            "  window.web3 = { currentProvider: provider, eth: { accounts: [provider.address] } };" +
             "  " +
-            "  Object.defineProperty(window, 'trustwallet', {" +
-            "    value: { ethereum: provider, solana: null, provider: provider }," +
-            "    writable: false," +
-            "    configurable: false," +
-            "    enumerable: true" +
-            "  });" +
+            generateEIP6963Script() +
             "  " +
-            "  Object.defineProperty(window, 'web3', {" +
-            "    value: { currentProvider: provider, eth: { accounts: [currentAddress] } }," +
-            "    writable: false," +
-            "    configurable: false," +
-            "    enumerable: true" +
-            "  });" +
-            "  " +
-            "  if (typeof window.coinbaseWalletExtension === 'undefined') {" +
-            "    window.coinbaseWalletExtension = provider;" +
-            "  }" +
-            "  " +
-            "  window.addEventListener('vaultkey_response', function(e) {" +
-            "    const { id, result, error } = e.detail;" +
-            "    console.log('[VaultKey] Response for id:', id, 'result:', result, 'error:', error);" +
-            "    if (pendingRequests[id]) {" +
-            "      if (error) {" +
-            "        pendingRequests[id].reject(new Error(error.message || error));" +
-            "      } else {" +
-            "        pendingRequests[id].resolve(result);" +
-            "      }" +
-            "      delete pendingRequests[id];" +
-            "    }" +
-            "  });" +
-            "  " +
-            "  const announceEIP6963 = function() {" +
-            "    try {" +
-            "      const info = {" +
-            "        uuid: 'vaultkey-wallet-' + Date.now()," +
-            "        name: 'VaultKey'," +
-            "        icon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAhGVYSWZNTQAqAAAACAAFARIAAwAAAAEAAQAAARoABQAAAAEAAABKARsABQAAAAEAAABSASgAAwAAAAEAAgAAh2kABAAAAAEAAABaAAAAAAAAAEgAAAABAAAASAAAAAEAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAKKADAAQAAAABAAAAKAAAAADzLqNFAAAACXBIWXMAAAsTAAALEwEAmpwYAAABWWlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iWE1QIENvcmUgNi4wLjAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczp0aWZmPSJodHRwOi8vbnMuYWRvYmUuY29tL3RpZmYvMS4wLyI+CiAgICAgICAgIDx0aWZmOk9yaWVudGF0aW9uPjE8L3RpZmY6T3JpZW50YXRpb24+CiAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgoZXuEHAAABqElEQVRYCe2YsU7DMBCGnUJXxMrIY/AILKy8CYI34A1gYmFhZWRFLMAjgFSJGTqAWn/Ff8p1OTs+O1WQ/kh1fL47/3ecOG4cx5EA/3cCg3/TH+b/rIQABCAAAQhAAAIQgAAEIAABCEBgTwT6+xIe5WVn/7zMH2bmOy0/nOfP8k/nBbW8f1x/mj/K0p1OuUx/kj/LX51nl/le/lZ/lr8qr2rl/bP6k/y1eM/D7s/yz/J1R7uW94/qT/I3B/Vcfz6qP8nXXexY3j+pP8lfHNJz/Pmofi1fd7Bjef+k/iR/cUjP8eej+pP8xSE9x5+P6k/y9Qc7lveP6k/yF4f0HH8+ql/L1x3sWN4/qT/J35xXc/35qH4tX3ewY3n/pH4tf3VIz/Hno/q1fN3BjuX9k/q1/NUhPcefj+rX8nUHO5b3T+rX8leH9Bx/PqpfyzcdaD/eP6lfy98c1HP8+ah+LV93sGN5/6R+LX91SM/x56P6tXzdwY7l/ZP6tfzVIT3Hn4/q1/J1BzuW90/q1/JXh/Qcfz6qX8vXHexY3j+pX8v/A/ADmpE='," +
-            "        rdns: 'app.vaultkey.wallet'" +
-            "      };" +
-            "      const detail = Object.freeze({ info: Object.freeze(info), provider: provider });" +
-            "      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail }));" +
-            "    } catch(e) { console.log('[VaultKey] EIP-6963 error:', e); }" +
-            "  };" +
-            "  " +
-            "  window.addEventListener('eip6963:requestProvider', function() {" +
-            "    announceEIP6963();" +
-            "  });" +
-            "  " +
-            "  setTimeout(function() {" +
-            "    window.dispatchEvent(new Event('ethereum#initialized'));" +
-            "    announceEIP6963();" +
-            "    if (window.ethereum._events && window.ethereum._events['connect']) {" +
-            "      window.ethereum.emit('connect', { chainId: window.ethereum.chainId });" +
-            "    }" +
-            "  }, 1);" +
-            "  " +
-            "  // Re-announce periodically in case DApp loads late" +
-            "  setTimeout(announceEIP6963, 100);" +
-            "  setTimeout(announceEIP6963, 500);" +
-            "  setTimeout(announceEIP6963, 1000);" +
-            "  console.log('[VaultKey] Web3 provider injected with EIP-6963 - isMetaMask:', provider.isMetaMask, 'isTrust:', provider.isTrust);" +
+            "  window.dispatchEvent(new Event('ethereum#initialized'));" +
+            "  console.log('[VaultKey] Provider injected - address:', provider.address, 'chainId:', provider.chainId);" +
             "})();",
-            address, chainId
+            currentAddress, currentChainId, rpcUrl, hexChainId, currentChainId
         );
     }
 
-    private class WebAppInterface {
+    private String generateEIP6963Script() {
+        return 
+            "  (function() {" +
+            "    try {" +
+            "      var info = {" +
+            "        uuid: 'vaultkey-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9)," +
+            "        name: 'VaultKey'," +
+            "        icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCI+PHJlY3QgZmlsbD0iIzNiODJmNiIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiByeD0iOCIvPjxwYXRoIGZpbGw9IndoaXRlIiBkPSJNMjAgOGw4IDZ2MTJsLTggNi04LTZWMTR6Ii8+PC9zdmc+'," +
+            "        rdns: 'app.vaultkey.wallet'" +
+            "      };" +
+            "      var detail = Object.freeze({ info: Object.freeze(info), provider: window.ethereum });" +
+            "      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: detail }));" +
+            "      window.addEventListener('eip6963:requestProvider', function() {" +
+            "        window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: detail }));" +
+            "      });" +
+            "    } catch(e) { console.log('[VaultKey] EIP-6963 error:', e); }" +
+            "  })();";
+    }
+
+    private class TrustBridge {
+        @JavascriptInterface
+        public void signMessage(int id, String method, String paramsJson) {
+            Log.d(TAG, "TrustBridge.signMessage: id=" + id + ", method=" + method);
+            pendingCallbacks.put(id, System.currentTimeMillis());
+            
+            try {
+                JSObject event = new JSObject();
+                event.put("id", id);
+                event.put("method", method);
+                event.put("params", paramsJson);
+                notifyListeners("web3Request", event);
+            } catch (Exception e) {
+                Log.e(TAG, "Error in signMessage", e);
+            }
+        }
+
+        @JavascriptInterface
+        public void signTransaction(int id, String to, String value, int nonce, String gasLimit, String gasPrice, String data) {
+            Log.d(TAG, "TrustBridge.signTransaction: id=" + id);
+            pendingCallbacks.put(id, System.currentTimeMillis());
+            
+            try {
+                org.json.JSONObject tx = new org.json.JSONObject();
+                tx.put("to", to);
+                tx.put("value", value);
+                tx.put("nonce", nonce);
+                tx.put("gasLimit", gasLimit);
+                tx.put("gasPrice", gasPrice);
+                tx.put("data", data);
+                
+                JSObject event = new JSObject();
+                event.put("id", id);
+                event.put("method", "eth_signTransaction");
+                event.put("params", "[" + tx.toString() + "]");
+                notifyListeners("web3Request", event);
+            } catch (Exception e) {
+                Log.e(TAG, "Error in signTransaction", e);
+            }
+        }
+
+        @JavascriptInterface
+        public void signPersonalMessage(int id, String data) {
+            Log.d(TAG, "TrustBridge.signPersonalMessage: id=" + id);
+            pendingCallbacks.put(id, System.currentTimeMillis());
+            
+            try {
+                JSObject event = new JSObject();
+                event.put("id", id);
+                event.put("method", "personal_sign");
+                event.put("params", "[\"" + data + "\", \"" + currentAddress + "\"]");
+                notifyListeners("web3Request", event);
+            } catch (Exception e) {
+                Log.e(TAG, "Error in signPersonalMessage", e);
+            }
+        }
+
+        @JavascriptInterface
+        public void signTypedMessage(int id, String data) {
+            Log.d(TAG, "TrustBridge.signTypedMessage: id=" + id);
+            pendingCallbacks.put(id, System.currentTimeMillis());
+            
+            try {
+                JSObject event = new JSObject();
+                event.put("id", id);
+                event.put("method", "eth_signTypedData_v4");
+                event.put("params", "[\"" + currentAddress + "\", " + data + "]");
+                notifyListeners("web3Request", event);
+            } catch (Exception e) {
+                Log.e(TAG, "Error in signTypedMessage", e);
+            }
+        }
+    }
+
+    private class VaultKeyBridge {
         @JavascriptInterface
         public void postMessage(String message) {
             try {
                 org.json.JSONObject json = new org.json.JSONObject(message);
                 int id = json.getInt("id");
                 String method = json.getString("method");
-                org.json.JSONArray params = json.optJSONArray("params");
+                String params = json.optString("params", "[]");
+                
+                pendingCallbacks.put(id, System.currentTimeMillis());
                 
                 JSObject event = new JSObject();
                 event.put("id", id);
                 event.put("method", method);
-                event.put("params", params != null ? params.toString() : "[]");
+                event.put("params", params);
                 notifyListeners("web3Request", event);
                 
             } catch (Exception e) {
@@ -473,6 +598,7 @@ public class DAppBrowserPlugin extends Plugin {
             webView.destroy();
             webView = null;
         }
+        pendingCallbacks.clear();
         super.handleOnDestroy();
     }
 }
