@@ -9,21 +9,29 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+
+import java.io.ByteArrayInputStream;
+import java.util.HashSet;
 
 @CapacitorPlugin(name = "DAppBrowser")
 public class DAppBrowserPlugin extends Plugin {
@@ -144,11 +152,18 @@ public class DAppBrowserPlugin extends Plugin {
         Activity activity = getActivity();
         if (activity == null) return;
 
+        int headerHeightPx = (int) TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, 56, activity.getResources().getDisplayMetrics());
+        int footerHeightPx = (int) TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, 72, activity.getResources().getDisplayMetrics());
+
         container = new FrameLayout(activity);
-        container.setLayoutParams(new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
-        ));
+        );
+        containerParams.setMargins(0, headerHeightPx, 0, footerHeightPx);
+        container.setLayoutParams(containerParams);
 
         webView = new WebView(activity);
         webView.setLayoutParams(new FrameLayout.LayoutParams(
@@ -167,6 +182,13 @@ public class DAppBrowserPlugin extends Plugin {
         settings.setUserAgentString(settings.getUserAgentString() + " VaultKeyWallet");
 
         webView.addJavascriptInterface(new WebAppInterface(), "VaultKeyBridge");
+
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            HashSet<String> origins = new HashSet<>();
+            origins.add("*");
+            WebViewCompat.addDocumentStartJavaScript(webView, injectionScript, origins);
+            Log.d(TAG, "Using document-start script injection");
+        }
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -347,23 +369,34 @@ public class DAppBrowserPlugin extends Plugin {
             "  try { delete window.trustwallet; } catch(e) {}" +
             "  try { delete window.web3; } catch(e) {}" +
             "  " +
+            "  provider.providers = [provider];" +
+            "  " +
             "  Object.defineProperty(window, 'ethereum', {" +
             "    value: provider," +
             "    writable: false," +
-            "    configurable: false" +
+            "    configurable: false," +
+            "    enumerable: true" +
             "  });" +
             "  " +
+            "  window.ethereum.providers = [provider];" +
+            "  " +
             "  Object.defineProperty(window, 'trustwallet', {" +
-            "    value: { ethereum: provider, solana: null }," +
+            "    value: { ethereum: provider, solana: null, provider: provider }," +
             "    writable: false," +
-            "    configurable: false" +
+            "    configurable: false," +
+            "    enumerable: true" +
             "  });" +
             "  " +
             "  Object.defineProperty(window, 'web3', {" +
-            "    value: { currentProvider: provider }," +
+            "    value: { currentProvider: provider, eth: { accounts: [currentAddress] } }," +
             "    writable: false," +
-            "    configurable: false" +
+            "    configurable: false," +
+            "    enumerable: true" +
             "  });" +
+            "  " +
+            "  if (typeof window.coinbaseWalletExtension === 'undefined') {" +
+            "    window.coinbaseWalletExtension = provider;" +
+            "  }" +
             "  " +
             "  window.addEventListener('vaultkey_response', function(e) {" +
             "    const { id, result, error } = e.detail;" +
