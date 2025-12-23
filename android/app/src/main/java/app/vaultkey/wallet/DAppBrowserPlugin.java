@@ -320,9 +320,8 @@ public class DAppBrowserPlugin extends Plugin {
             }
         });
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        }
+        // Don't force hardware layer type - it breaks IME/input on Android 13+
+        // Let WebView use default compositing
 
         container.addView(webView);
         
@@ -343,7 +342,6 @@ public class DAppBrowserPlugin extends Plugin {
         
         // Cache settings for better SPA performance
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setAppCacheEnabled(true);
         
         // Viewport settings - critical for React apps
         settings.setUseWideViewPort(true);
@@ -645,7 +643,11 @@ public class DAppBrowserPlugin extends Plugin {
             "provider.providers.push(provider);" +
             
             // Expose update function to allow native code to update closure state
+            // Only emit events when values actually change to avoid breaking React apps
             "window.__vkUpdate=function(newAddr,newChainId,newRpcUrl){" +
+            "var addrChanged=_addr!==newAddr;" +
+            "var chainChanged=_chainId!==newChainId;" +
+            "if(!addrChanged&&!chainChanged)return;" +
             "_addr=newAddr;" +
             "_chainId=newChainId;" +
             "_netVersion=String(parseInt(newChainId,16));" +
@@ -654,8 +656,8 @@ public class DAppBrowserPlugin extends Plugin {
             "provider.chainId=_chainId;" +
             "provider.networkVersion=_netVersion;" +
             "provider._rpcUrl=_rpcUrl;" +
-            "emit('accountsChanged',[_addr]);" +
-            "emit('chainChanged',_chainId);" +
+            "if(addrChanged)emit('accountsChanged',[_addr]);" +
+            "if(chainChanged)emit('chainChanged',_chainId);" +
             "console.log('[VaultKey] State updated:',_chainId,_addr?_addr.slice(0,10)+'...':'none');" +
             "};" +
             
