@@ -65,6 +65,23 @@ public class UsbSerialPlugin extends Plugin {
                         }
                     }
                 }
+            } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
+                UsbDevice dev = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                if (dev != null) {
+                    Log.d(TAG, "USB device attached: " + dev.getDeviceName());
+                    JSObject deviceInfo = new JSObject();
+                    deviceInfo.put("deviceId", dev.getDeviceId());
+                    deviceInfo.put("vendorId", dev.getVendorId());
+                    deviceInfo.put("productId", dev.getProductId());
+                    deviceInfo.put("deviceName", dev.getDeviceName());
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        deviceInfo.put("productName", dev.getProductName());
+                        deviceInfo.put("manufacturerName", dev.getManufacturerName());
+                    }
+                    JSObject event = new JSObject();
+                    event.put("device", deviceInfo);
+                    notifyListeners("usbAttached", event);
+                }
             } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
                 UsbDevice dev = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
                 if (dev != null && device != null && dev.equals(device)) {
@@ -80,6 +97,7 @@ public class UsbSerialPlugin extends Plugin {
         usbManager = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
         
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+        filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             getContext().registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED);

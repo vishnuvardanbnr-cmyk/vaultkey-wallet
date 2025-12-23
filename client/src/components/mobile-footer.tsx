@@ -44,30 +44,34 @@ export function MobileFooter() {
     return location.startsWith(href);
   };
 
+  const isDAppsPage = location.startsWith("/dapps") || location.startsWith("/dapp-browser");
+
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background md:hidden">
-      <div className="flex items-center justify-center gap-2 border-b border-border/50 px-4 py-2">
-        <Button
-          variant={walletMode === "hard_wallet" ? "default" : "outline"}
-          size="sm"
-          className="flex-1 gap-2"
-          onClick={() => setWalletMode("hard_wallet")}
-          data-testid="button-hard-wallet-mode"
-        >
-          <Shield className="h-4 w-4" />
-          Hard Wallet
-        </Button>
-        <Button
-          variant={walletMode === "soft_wallet" ? "default" : "outline"}
-          size="sm"
-          className="flex-1 gap-2"
-          onClick={() => setWalletMode("soft_wallet")}
-          data-testid="button-soft-wallet-mode"
-        >
-          <Wallet className="h-4 w-4" />
-          Soft Wallet
-        </Button>
-      </div>
+      {!isDAppsPage && (
+        <div className="flex items-center justify-center gap-2 border-b border-border/50 px-4 py-2">
+          <Button
+            variant={walletMode === "hard_wallet" ? "default" : "outline"}
+            size="sm"
+            className="flex-1 gap-2"
+            onClick={() => setWalletMode("hard_wallet")}
+            data-testid="button-hard-wallet-mode"
+          >
+            <Shield className="h-4 w-4" />
+            Hard Wallet
+          </Button>
+          <Button
+            variant={walletMode === "soft_wallet" ? "default" : "outline"}
+            size="sm"
+            className="flex-1 gap-2"
+            onClick={() => setWalletMode("soft_wallet")}
+            data-testid="button-soft-wallet-mode"
+          >
+            <Wallet className="h-4 w-4" />
+            Soft Wallet
+          </Button>
+        </div>
+      )}
 
       <nav className="flex items-center justify-around px-2 py-2">
         {navItems.map((item) => (

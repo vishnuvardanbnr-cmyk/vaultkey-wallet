@@ -1,4 +1,5 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
+import { useEffect, useRef } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -25,22 +26,40 @@ import TransactionDetail from "@/pages/transaction-detail";
 import Bridge from "@/pages/bridge";
 import NotFound from "@/pages/not-found";
 
+function ScrollToTop() {
+  const [location] = useLocation();
+  const mainRef = useRef<HTMLElement | null>(null);
+  
+  useEffect(() => {
+    const mainElement = document.querySelector('main');
+    if (mainElement) {
+      mainElement.scrollTo(0, 0);
+    }
+    window.scrollTo(0, 0);
+  }, [location]);
+  
+  return null;
+}
+
 function Router() {
   return (
-    <Switch>
-      <Route path="/" component={Dashboard} />
-      <Route path="/wallet/:chainId/token/:tokenId" component={TokenDetail} />
-      <Route path="/transaction" component={TransactionDetail} />
-      <Route path="/transfer" component={Transfer} />
-      <Route path="/chains" component={Chains} />
-      <Route path="/settings" component={Settings} />
-      <Route path="/setup" component={SetupGuide} />
-      <Route path="/manage-crypto" component={ManageCrypto} />
-      <Route path="/dapps" component={DApps} />
-      <Route path="/dapp-browser" component={DAppBrowser} />
-      <Route path="/bridge" component={Bridge} />
-      <Route component={NotFound} />
-    </Switch>
+    <>
+      <ScrollToTop />
+      <Switch>
+        <Route path="/" component={Dashboard} />
+        <Route path="/wallet/:chainId/token/:tokenId" component={TokenDetail} />
+        <Route path="/transaction" component={TransactionDetail} />
+        <Route path="/transfer" component={Transfer} />
+        <Route path="/chains" component={Chains} />
+        <Route path="/settings" component={Settings} />
+        <Route path="/setup" component={SetupGuide} />
+        <Route path="/manage-crypto" component={ManageCrypto} />
+        <Route path="/dapps" component={DApps} />
+        <Route path="/dapp-browser" component={DAppBrowser} />
+        <Route path="/bridge" component={Bridge} />
+        <Route component={NotFound} />
+      </Switch>
+    </>
   );
 }
 
