@@ -424,9 +424,10 @@ public class DAppBrowserPlugin extends Plugin {
             "if(m==='eth_coinbase')return Promise.resolve(addr);" +
             "if(m==='wallet_requestPermissions')return Promise.resolve([{parentCapability:'eth_accounts'}]);" +
             "if(m==='wallet_getPermissions')return Promise.resolve([{parentCapability:'eth_accounts'}]);" +
-            "if(m==='wallet_switchEthereumChain'){var nc=p[0]&&p[0].chainId;if(nc){cid=nc;nv=parseInt(nc,16).toString();s.chainId=cid;s.networkVersion=nv;s.emit('chainChanged',cid);}return Promise.resolve(null);}" +
+            "if(m==='wallet_switchEthereumChain'){var nc=p[0]&&p[0].chainId;if(nc){cid=nc;nv=parseInt(nc,16).toString();s.chainId=cid;s.networkVersion=nv;var rpcs={1:'https://eth.llamarpc.com',56:'https://bsc-dataseed1.binance.org',137:'https://polygon-rpc.com',43114:'https://api.avax.network/ext/bc/C/rpc',42161:'https://arb1.arbitrum.io/rpc',10:'https://mainnet.optimism.io',8453:'https://mainnet.base.org'};rpc=rpcs[parseInt(nc,16)]||rpc;s._rpcUrl=rpc;s.emit('chainChanged',cid);}return Promise.resolve(null);}" +
             "if(m==='wallet_addEthereumChain')return Promise.resolve(null);" +
             "if(m==='wallet_watchAsset')return Promise.resolve(true);" +
+            "if(m==='wallet_revokePermissions'||m==='wallet_disconnect'){s.selectedAddress=null;s.emit('accountsChanged',[]);s.emit('disconnect',{code:4900,message:'Disconnected'});return new Promise(function(res,rej){var i=_id++;window._vkCallbacks[i]={resolve:res,reject:rej};try{VaultKeyNative.postMessage(JSON.stringify({id:i,method:m,params:p}));}catch(e){delete window._vkCallbacks[i];res(null);}});}" +
             "" +
             "var rpcMethods=['eth_blockNumber','eth_getBlockByNumber','eth_getBlockByHash','eth_call','eth_getBalance','eth_getCode','eth_getStorageAt','eth_getTransactionCount','eth_getTransactionByHash','eth_getTransactionReceipt','eth_getLogs','eth_estimateGas','eth_gasPrice','eth_feeHistory','eth_maxPriorityFeePerGas','eth_getBlockTransactionCountByHash','eth_getBlockTransactionCountByNumber','eth_getUncleCountByBlockHash','eth_getUncleCountByBlockNumber','eth_protocolVersion','eth_syncing','net_listening','net_peerCount','web3_clientVersion','web3_sha3'];" +
             "if(rpcMethods.indexOf(m)>=0){return rpcCall(m,p);}" +
