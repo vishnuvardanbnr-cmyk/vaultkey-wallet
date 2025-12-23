@@ -237,11 +237,11 @@ async function fetchClientSideGasEstimate(chainId: string, isNative: boolean, ch
 // Chain-specific fallback gas prices in Gwei
 function getFallbackGasPrice(chainId: string): number {
   const fallbacks: Record<string, number> = {
-    'chain-0': 20,   // Ethereum ~20 Gwei
-    'chain-2': 3,    // BNB Chain ~3 Gwei
-    'chain-3': 30,   // Polygon ~30 Gwei
-    'chain-4': 25,   // Avalanche ~25 Gwei
-    'chain-5': 0.1,  // Arbitrum ~0.1 Gwei
+    'chain-0': 20,    // Ethereum ~20 Gwei
+    'chain-2': 1,     // BNB Chain ~1 Gwei (actual is 0.05 but using 1 as safe fallback)
+    'chain-3': 30,    // Polygon ~30 Gwei
+    'chain-4': 25,    // Avalanche ~25 Gwei
+    'chain-5': 0.1,   // Arbitrum ~0.1 Gwei
     'chain-7': 0.001, // Optimism ~0.001 Gwei
   };
   return fallbacks[chainId] || 20;
