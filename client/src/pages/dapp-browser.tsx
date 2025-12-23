@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { ExternalLink, ChevronDown, Globe, RefreshCw, X, Link2, Check, Unlink, Copy } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -34,6 +34,9 @@ import { ChainIcon } from "@/components/chain-icon";
 import { useLocation, Link } from "wouter";
 import { DEFAULT_CHAINS } from "@shared/schema";
 import { walletConnectService, type SessionProposal, type DAppSession } from "@/lib/walletconnect-service";
+import { dappBridge } from "@/lib/dapp-bridge";
+import { getWeb3ProviderScript, createProviderMessageHandler } from "@/lib/web3-provider-injection";
+import { nativeHttpPost } from "@/lib/native-http";
 
 const EVM_CHAINS = DEFAULT_CHAINS.filter(c => c.chainId > 0);
 
@@ -65,6 +68,48 @@ export default function DAppBrowser() {
     return chain?.chainId === selectedChainId;
   }) || wallets[0];
 
+  const handleDAppRequest = useCallback(async (request: { id: number; method: string; params: any[] }) => {
+    dappBridge.setChainId(selectedChainId);
+    dappBridge.setAccount(currentWallet?.address || null);
+    
+    return new Promise<{ result?: any; error?: { code: number; message: string } }>((resolve) => {
+      dappBridge.setResponseHandler((response) => {
+        resolve({ result: response.result, error: response.error });
+      });
+      dappBridge.handleRequest({
+        type: 'eth',
+        id: request.id,
+        method: request.method,
+        params: request.params
+      });
+    });
+  }, [selectedChainId, currentWallet?.address]);
+
+  useEffect(() => {
+    const messageHandler = createProviderMessageHandler(handleDAppRequest);
+    window.addEventListener('message', messageHandler);
+    return () => window.removeEventListener('message', messageHandler);
+  }, [handleDAppRequest]);
+
+  useEffect(() => {
+    dappBridge.setChainId(selectedChainId);
+    dappBridge.setAccount(currentWallet?.address || null);
+  }, [selectedChainId, currentWallet?.address]);
+
+  const injectWeb3Provider = useCallback(() => {
+    if (!iframeRef.current?.contentWindow || !currentWallet?.address) return;
+    
+    try {
+      const script = getWeb3ProviderScript(currentWallet.address, selectedChainId);
+      iframeRef.current.contentWindow.postMessage({
+        type: 'INJECT_PROVIDER',
+        script
+      }, '*');
+    } catch (e) {
+      console.log('[DAppBrowser] Provider injection not available for cross-origin iframe');
+    }
+  }, [currentWallet?.address, selectedChainId]);
+
   const handleNavigate = () => {
     if (!url.trim()) return;
     let formattedUrl = url.trim();
@@ -86,6 +131,7 @@ export default function DAppBrowser() {
 
   const handleIframeLoad = () => {
     setIsLoading(false);
+    injectWeb3Provider();
   };
 
   const handleIframeError = () => {
@@ -178,8 +224,13 @@ export default function DAppBrowser() {
               <Globe className="mx-auto h-16 w-16 text-muted-foreground/30 mb-4" />
               <h2 className="text-xl font-semibold mb-2">DApp Browser</h2>
               <p className="text-muted-foreground mb-4">
-                Enter a DApp URL above to browse decentralized applications with your connected wallet.
+                Browse decentralized applications. For best compatibility, connect to DApps using WalletConnect.
               </p>
+              {currentWallet && (
+                <p className="text-xs text-muted-foreground mb-4">
+                  Connected: {currentWallet.address.slice(0, 8)}...{currentWallet.address.slice(-6)} ({selectedChain.name})
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { name: "PancakeSwap", url: "pancakeswap.finance" },
@@ -210,9 +261,15 @@ export default function DAppBrowser() {
               <X className="mx-auto h-16 w-16 text-destructive/50 mb-4" />
               <h2 className="text-xl font-semibold mb-2">Cannot Load DApp</h2>
               <p className="text-muted-foreground mb-4">
-                This DApp cannot be embedded due to security restrictions. 
-                Please open it in a new tab and use WalletConnect to connect.
+                This DApp cannot be embedded due to security restrictions.
+                Open it externally and use WalletConnect to connect your VaultKey wallet.
               </p>
+              {currentWallet && (
+                <div className="text-xs bg-muted p-2 rounded mb-4">
+                  <span className="text-muted-foreground">Address to connect: </span>
+                  <span className="font-mono">{currentWallet.address.slice(0, 10)}...{currentWallet.address.slice(-8)}</span>
+                </div>
+              )}
               <div className="flex gap-2 justify-center">
                 <Button variant="outline" onClick={openExternal}>
                   <ExternalLink className="mr-2 h-4 w-4" />

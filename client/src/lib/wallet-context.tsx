@@ -170,6 +170,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = hardwareWallet.subscribe(setHardwareState);
+    hardwareWallet.initMobileDeviceMonitoring();
     return unsubscribe;
   }, []);
 

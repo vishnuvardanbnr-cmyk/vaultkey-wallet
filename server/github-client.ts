@@ -1,4 +1,5 @@
-import { Octokit } from '@octokit/rest';
+// GitHub integration using Replit's GitHub connector
+import { Octokit } from '@octokit/rest'
 
 let connectionSettings: any;
 
@@ -7,7 +8,7 @@ async function getAccessToken() {
     return connectionSettings.settings.access_token;
   }
   
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME
   const xReplitToken = process.env.REPL_IDENTITY 
     ? 'repl ' + process.env.REPL_IDENTITY 
     : process.env.WEB_REPL_RENEWAL 
@@ -36,11 +37,10 @@ async function getAccessToken() {
   return accessToken;
 }
 
+// WARNING: Never cache this client.
+// Access tokens expire, so a new client must be created each time.
+// Always call this function again to get a fresh client.
 export async function getUncachableGitHubClient() {
   const accessToken = await getAccessToken();
   return new Octokit({ auth: accessToken });
-}
-
-export async function getGitHubToken() {
-  return await getAccessToken();
 }

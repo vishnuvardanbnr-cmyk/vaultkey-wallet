@@ -16,8 +16,10 @@ interface UsbSerialPlugin {
   write(options: { data: string }): Promise<{ success: boolean; bytesWritten?: number; error?: string }>;
   read(options?: { timeout?: number }): Promise<{ success: boolean; data?: string; bytesRead?: number; error?: string }>;
   isConnected(): Promise<{ connected: boolean }>;
+  requestDevice?(options?: { vendorId?: number }): Promise<{ success: boolean; device?: UsbDevice; error?: string }>;
   addListener(event: "usbData", callback: (data: { data: string }) => void): Promise<{ remove: () => void }>;
   addListener(event: "usbDisconnected", callback: () => void): Promise<{ remove: () => void }>;
+  addListener(event: "usbAttached", callback: (data: { device: UsbDevice }) => void): Promise<{ remove: () => void }>;
 }
 
 const UsbSerial = registerPlugin<UsbSerialPlugin>("UsbSerial");
@@ -32,8 +34,12 @@ export class MobileUsbSerialService {
   private responseResolver: ((value: any) => void) | null = null;
   private responseTimeout: ReturnType<typeof setTimeout> | null = null;
   private dataListener: { remove: () => void } | null = null;
+  private disconnectListener: { remove: () => void } | null = null;
+  private attachListener: { remove: () => void } | null = null;
   private cachedSeed: string | null = null;
   private currentPin: string | null = null;
+  private onDeviceAttachedCallback: ((device: UsbDevice) => void) | null = null;
+  private onDeviceDetachedCallback: (() => void) | null = null;
 
   async isAvailable(): Promise<boolean> {
     if (!isMobileWithUsbSupport()) {
@@ -41,9 +47,69 @@ export class MobileUsbSerialService {
     }
     try {
       const result = await UsbSerial.getDevices();
+      console.log('[MobileUsbSerial] getDevices result:', result);
       return result.success && result.count > 0;
-    } catch {
+    } catch (e) {
+      console.log('[MobileUsbSerial] getDevices error:', e);
       return false;
+    }
+  }
+
+  async getDeviceList(): Promise<UsbDevice[]> {
+    if (!isMobileWithUsbSupport()) {
+      return [];
+    }
+    try {
+      const result = await UsbSerial.getDevices();
+      if (result.success && result.devices) {
+        return Object.values(result.devices);
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }
+
+  onDeviceAttached(callback: (device: UsbDevice) => void): void {
+    this.onDeviceAttachedCallback = callback;
+  }
+
+  onDeviceDetached(callback: () => void): void {
+    this.onDeviceDetachedCallback = callback;
+  }
+
+  async startDeviceMonitoring(): Promise<void> {
+    if (!isMobileWithUsbSupport()) return;
+    
+    try {
+      this.attachListener = await UsbSerial.addListener("usbAttached", (data) => {
+        console.log('[MobileUsbSerial] Device attached:', data.device);
+        if (this.onDeviceAttachedCallback) {
+          this.onDeviceAttachedCallback(data.device);
+        }
+      });
+      
+      this.disconnectListener = await UsbSerial.addListener("usbDisconnected", () => {
+        console.log('[MobileUsbSerial] Device detached');
+        this.connected = false;
+        this.cachedSeed = null;
+        if (this.onDeviceDetachedCallback) {
+          this.onDeviceDetachedCallback();
+        }
+      });
+    } catch (e) {
+      console.log('[MobileUsbSerial] Failed to start device monitoring:', e);
+    }
+  }
+
+  stopDeviceMonitoring(): void {
+    if (this.attachListener) {
+      this.attachListener.remove();
+      this.attachListener = null;
+    }
+    if (this.disconnectListener) {
+      this.disconnectListener.remove();
+      this.disconnectListener = null;
     }
   }
 

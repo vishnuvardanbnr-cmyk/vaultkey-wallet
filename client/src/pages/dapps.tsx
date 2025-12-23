@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ExternalLink, Globe, Wallet, ChevronRight, RefreshCw, X } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import { useWallet } from "@/lib/wallet-context";
 import { HardwareStatusCard } from "@/components/hardware-status";
 import { ChainIcon } from "@/components/chain-icon";
 import { DEFAULT_CHAINS } from "@shared/schema";
+import { isNativeDAppBrowserAvailable, nativeDAppBrowser } from "@/lib/native-dapp-browser";
 
 const EVM_CHAINS = DEFAULT_CHAINS.filter(c => c.chainId > 0);
 
@@ -51,8 +52,10 @@ export default function DApps() {
   const [selectedChainId, setSelectedChainId] = useState<number>(56); // BNB Chain default
   const [showWalletSelector, setShowWalletSelector] = useState(false);
   const [connectedWallet, setConnectedWallet] = useState<string | null>(null);
+  const [isNativeBrowserOpen, setIsNativeBrowserOpen] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  const isMobile = isNativeDAppBrowserAvailable();
   const selectedChain = EVM_CHAINS.find(c => c.chainId === selectedChainId) || EVM_CHAINS[0];
 
   // Get wallets for current chain
@@ -67,23 +70,109 @@ export default function DApps() {
     return chain && chain.chainId > 0;
   });
 
-  const handleNavigate = () => {
+  // Cleanup native browser on unmount
+  useEffect(() => {
+    return () => {
+      if (isNativeBrowserOpen) {
+        nativeDAppBrowser.close();
+      }
+    };
+  }, [isNativeBrowserOpen]);
+
+  // Update native browser when account changes
+  useEffect(() => {
+    if (isNativeBrowserOpen && connectedWallet) {
+      nativeDAppBrowser.updateAccount(connectedWallet, selectedChainId);
+    }
+  }, [connectedWallet, selectedChainId, isNativeBrowserOpen]);
+
+  const openNativeBrowser = async (targetUrl: string) => {
+    const address = connectedWallet || chainWallets[0]?.address || "";
+    
+    if (!address) {
+      toast({
+        title: "No Wallet Selected",
+        description: "Please select a wallet to connect to DApps",
+        variant: "destructive",
+      });
+      setShowWalletSelector(true);
+      return;
+    }
+
+    setIsLoading(true);
+    
+    nativeDAppBrowser.setOnLoadingChange((loading) => {
+      setIsLoading(loading);
+    });
+    
+    nativeDAppBrowser.setOnUrlChange((newUrl) => {
+      setUrl(newUrl);
+      setCurrentUrl(newUrl);
+    });
+
+    nativeDAppBrowser.setOnChainChange((newChainId) => {
+      setSelectedChainId(newChainId);
+      toast({
+        title: "Network Changed",
+        description: `DApp requested switch to ${EVM_CHAINS.find(c => c.chainId === newChainId)?.name || 'Unknown Network'}`,
+        duration: 2000,
+      });
+    });
+
+    const success = await nativeDAppBrowser.open(targetUrl, address, selectedChainId);
+    
+    if (success) {
+      setIsNativeBrowserOpen(true);
+      setConnectedWallet(address);
+      toast({
+        title: "DApp Browser Opened",
+        description: "Web3 provider injected. All wallets will connect to VaultKey.",
+        duration: 3000,
+      });
+    } else {
+      setIsLoading(false);
+      toast({
+        title: "Failed to Open",
+        description: "Could not open native browser",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const closeNativeBrowser = async () => {
+    await nativeDAppBrowser.close();
+    setIsNativeBrowserOpen(false);
+    setCurrentUrl("");
+    setUrl("");
+  };
+
+  const handleNavigate = async () => {
     if (!url.trim()) return;
     let formattedUrl = url.trim();
     if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
       formattedUrl = "https://" + formattedUrl;
     }
-    setCurrentUrl(formattedUrl);
-    setUrl(formattedUrl);
-    setIframeError(false);
-    setIsLoading(true);
+    
+    if (isMobile) {
+      await openNativeBrowser(formattedUrl);
+    } else {
+      setCurrentUrl(formattedUrl);
+      setUrl(formattedUrl);
+      setIframeError(false);
+      setIsLoading(true);
+    }
   };
 
-  const handleOpenDapp = (dappUrl: string) => {
-    setUrl(dappUrl);
-    setCurrentUrl(dappUrl);
-    setIframeError(false);
-    setIsLoading(true);
+  const handleOpenDapp = async (dappUrl: string) => {
+    if (isMobile) {
+      setUrl(dappUrl);
+      await openNativeBrowser(dappUrl);
+    } else {
+      setUrl(dappUrl);
+      setCurrentUrl(dappUrl);
+      setIframeError(false);
+      setIsLoading(true);
+    }
   };
 
   const handleIframeLoad = () => {
@@ -136,7 +225,18 @@ export default function DApps() {
       {/* Header with URL bar */}
       <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="flex items-center gap-1.5 p-2">
-          <BackButton />
+          {isNativeBrowserOpen ? (
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={closeNativeBrowser}
+              data-testid="button-close-browser"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          ) : (
+            <BackButton />
+          )}
 
           <div className="flex-1 flex items-center gap-1.5 bg-muted/50 rounded-lg px-2 py-1">
             <Input
@@ -186,33 +286,44 @@ export default function DApps() {
           </Button>
         </div>
 
-        {/* Connected wallet indicator below URL */}
-        <div 
-          className="mx-2 mb-2 px-3 py-1.5 rounded-md bg-muted/50 text-xs flex items-center gap-2 cursor-pointer hover-elevate"
-          onClick={handleConnectWallet}
-          data-testid="wallet-indicator"
-        >
-          <ChainIcon symbol={selectedChain.symbol} iconColor={selectedChain.iconColor} size="sm" />
-          {connectedWallet ? (
-            <>
-              <span className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="font-mono">{connectedWallet.slice(0, 10)}...{connectedWallet.slice(-6)}</span>
-            </>
-          ) : (
-            <span className="text-muted-foreground">Tap to select wallet</span>
-          )}
-        </div>
       </div>
 
       {/* Browser content */}
       <div className="flex-1 relative bg-muted/30">
-        {!currentUrl ? (
+        {isNativeBrowserOpen ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-center max-w-md p-6">
+              <Globe className="mx-auto h-16 w-16 text-primary/50 mb-4 animate-pulse" />
+              <h2 className="text-xl font-semibold mb-2">Native Browser Active</h2>
+              <p className="text-muted-foreground mb-4">
+                Web3 provider injected. Click any wallet option (MetaMask, Trust Wallet, etc.) to connect with VaultKey.
+              </p>
+              <div className="p-3 bg-muted rounded-lg mb-4">
+                <p className="text-sm font-mono break-all">{currentUrl}</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Connected: {connectedWallet?.slice(0, 8)}...{connectedWallet?.slice(-6)}
+              </p>
+              <Button 
+                variant="outline" 
+                className="mt-4"
+                onClick={closeNativeBrowser}
+                data-testid="button-close-native-browser"
+              >
+                <X className="mr-2 h-4 w-4" />
+                Close Browser
+              </Button>
+            </div>
+          </div>
+        ) : !currentUrl ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center max-w-md p-6">
               <Globe className="mx-auto h-16 w-16 text-muted-foreground/30 mb-4" />
               <h2 className="text-xl font-semibold mb-2">DApp Browser</h2>
               <p className="text-muted-foreground mb-6">
-                Enter a URL or select a popular DApp below
+                {isMobile 
+                  ? "Open a DApp and all wallet connections will use VaultKey" 
+                  : "Enter a URL or select a popular DApp below"}
               </p>
 
               <div className="grid grid-cols-2 gap-2">

@@ -11,6 +11,9 @@ import {
   Shield,
   AlertCircle,
   Coins,
+  ScanLine,
+  Users,
+  Check,
 } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +22,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWallet } from "@/lib/wallet-context";
@@ -28,6 +37,7 @@ import { HardwareStatusCard } from "@/components/hardware-status";
 import { clientStorage, type CustomToken } from "@/lib/client-storage";
 import { formatCryptoBalance } from "@/lib/price-service";
 import { TOKEN_PARENT_CHAIN_SYMBOL } from "@/lib/chain-mappings";
+import { nativeHttpPost } from "@/lib/native-http";
 import type { Chain, Wallet } from "@shared/schema";
 
 interface TokenOption {
@@ -171,18 +181,15 @@ async function fetchClientSideGasEstimate(chainId: string, isNative: boolean, ch
   
   try {
     console.log('[GasEstimate] Fetching gas price for chain:', chainId, 'RPC:', rpcUrl);
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'eth_gasPrice',
-        params: [],
-        id: 1,
-      }),
+    
+    // Use native HTTP for mobile, regular fetch for web
+    const data = await nativeHttpPost(rpcUrl, {
+      jsonrpc: '2.0',
+      method: 'eth_gasPrice',
+      params: [],
+      id: 1,
     });
     
-    const data = await response.json();
     console.log('[GasEstimate] Response:', data);
     
     if (!data.result) {
@@ -208,20 +215,41 @@ async function fetchClientSideGasEstimate(chainId: string, isNative: boolean, ch
     };
   } catch (error) {
     console.error('[GasEstimate] Client-side fetch failed:', error);
+    // Return chain-specific fallback estimates
+    const fallbackGasPrice = getFallbackGasPrice(chainId);
+    const gasLimit = isNative 
+      ? (DEFAULT_GAS_LIMITS[chainId] || 21000)
+      : (TOKEN_GAS_LIMITS[chainId] || 65000);
+    const estimatedFee = (fallbackGasPrice * gasLimit / 1e9).toFixed(6);
+    
     return {
-      gasPrice: '0',
-      gasPriceGwei: '20',
-      estimatedGas: '21000',
-      estimatedFee: '0.00042',
+      gasPrice: (fallbackGasPrice * 1e9).toString(),
+      gasPriceGwei: fallbackGasPrice.toString(),
+      estimatedGas: gasLimit.toString(),
+      estimatedFee,
       estimatedFeeUsd: null,
       symbol,
-      error: 'Failed to fetch gas price',
+      error: 'Using estimated values',
     };
   }
 }
 
+// Chain-specific fallback gas prices in Gwei
+function getFallbackGasPrice(chainId: string): number {
+  const fallbacks: Record<string, number> = {
+    'chain-0': 20,   // Ethereum ~20 Gwei
+    'chain-3': 3,    // BNB Chain ~3 Gwei
+    'chain-4': 30,   // Polygon ~30 Gwei
+    'chain-5': 25,   // Avalanche ~25 Gwei
+    'chain-6': 0.1,  // Arbitrum ~0.1 Gwei
+    'chain-7': 0.001, // Optimism ~0.001 Gwei
+  };
+  return fallbacks[chainId] || 20;
+}
+
 function SendTab({ chains, wallets, initialChainId, initialTokenId }: { chains: Chain[]; wallets: Wallet[]; initialChainId?: string; initialTokenId?: string }) {
   const { setShowPinModal, setPinAction, setPendingTransaction, topAssets, enabledAssetIds, tokenBalances, customTokenBalances } = useWallet();
+  const { toast } = useToast();
   const [selectedChainId, setSelectedChainId] = useState<string>(initialChainId || "");
   const [selectedTokenId, setSelectedTokenId] = useState<string>(initialTokenId || "native");
   const isTokenLocked = !!initialTokenId;
@@ -454,15 +482,79 @@ function SendTab({ chains, wallets, initialChainId, initialTokenId }: { chains: 
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="recipient">Recipient Address</Label>
-        <Input
-          id="recipient"
-          placeholder={getAddressPlaceholder(selectedChain?.symbol)}
-          value={toAddress}
-          onChange={(e) => setToAddress(e.target.value)}
-          className="font-mono"
-          data-testid="input-recipient-address"
-        />
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="recipient">Recipient Address</Label>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto py-0 text-xs gap-1"
+                data-testid="button-select-wallet"
+              >
+                <Users className="h-3 w-3" />
+                Select Wallet
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              {wallets
+                .filter(w => w.chainId === selectedChainId && w.address !== selectedWallet?.address)
+                .map((wallet) => (
+                  <DropdownMenuItem
+                    key={wallet.id}
+                    onClick={() => setToAddress(wallet.address)}
+                    className="flex items-center gap-2 font-mono text-xs"
+                    data-testid={`wallet-option-${wallet.id}`}
+                  >
+                    <ChainIcon symbol={selectedChain?.symbol || ''} size="sm" />
+                    <span className="truncate flex-1">
+                      {wallet.address.slice(0, 12)}...{wallet.address.slice(-8)}
+                    </span>
+                    {toAddress === wallet.address && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              {wallets.filter(w => w.chainId === selectedChainId && w.address !== selectedWallet?.address).length === 0 && (
+                <DropdownMenuItem disabled className="text-muted-foreground text-xs">
+                  No other wallets on this chain
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        <div className="flex gap-1">
+          <Input
+            id="recipient"
+            placeholder={getAddressPlaceholder(selectedChain?.symbol)}
+            value={toAddress}
+            onChange={(e) => setToAddress(e.target.value)}
+            className="font-mono flex-1"
+            data-testid="input-recipient-address"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => {
+              if (Capacitor.isNativePlatform()) {
+                toast({
+                  title: "QR Scanner",
+                  description: "QR scanning will open your camera",
+                });
+              } else {
+                toast({
+                  title: "QR Scanner",
+                  description: "QR scanning is available on mobile app",
+                });
+              }
+            }}
+            data-testid="button-scan-qr"
+          >
+            <ScanLine className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-2">

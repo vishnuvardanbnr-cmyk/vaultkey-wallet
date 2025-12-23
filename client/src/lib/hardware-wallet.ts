@@ -159,6 +159,45 @@ class HardwareWalletService {
   }
 
   private usingMobileUsb = false;
+  private mobileMonitoringStarted = false;
+
+  async initMobileDeviceMonitoring(): Promise<void> {
+    if (this.mobileMonitoringStarted || !isMobileWithUsbSupport()) return;
+    
+    this.mobileMonitoringStarted = true;
+    console.log("[HardwareWallet] Starting mobile USB device monitoring...");
+    
+    mobileUsbSerial.onDeviceAttached(async (device) => {
+      console.log("[HardwareWallet] USB device attached, attempting auto-connect:", device);
+      if (device.vendorId === 11914) {
+        await this.connectRaspberryPi();
+      }
+    });
+    
+    mobileUsbSerial.onDeviceDetached(() => {
+      console.log("[HardwareWallet] USB device detached");
+      if (this.usingMobileUsb) {
+        this.setState({
+          type: null,
+          status: "disconnected",
+          deviceName: null,
+          error: "Hardware wallet disconnected",
+        });
+        this.usingMobileUsb = false;
+        this.picoHasWallet = false;
+      }
+    });
+    
+    await mobileUsbSerial.startDeviceMonitoring();
+    
+    const devices = await mobileUsbSerial.getDeviceList();
+    console.log("[HardwareWallet] Initial device list:", devices);
+    const picoDevice = devices.find(d => d.vendorId === 11914);
+    if (picoDevice) {
+      console.log("[HardwareWallet] Pico device already connected, auto-connecting...");
+      await this.connectRaspberryPi();
+    }
+  }
 
   async connectRaspberryPi(): Promise<boolean> {
     console.log("[HardwareWallet] connectRaspberryPi() called");
