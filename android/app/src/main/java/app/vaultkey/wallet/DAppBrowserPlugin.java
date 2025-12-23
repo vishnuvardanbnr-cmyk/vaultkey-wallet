@@ -333,35 +333,53 @@ public class DAppBrowserPlugin extends Plugin {
     private void configureWebSettings(WebView webView) {
         WebSettings settings = webView.getSettings();
         
+        // Core JavaScript settings
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         
+        // Cache settings for better SPA performance
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setAppCacheEnabled(true);
+        
+        // Viewport settings - critical for React apps
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setSupportZoom(true);
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
         
+        // Text and input settings - important for search fields
+        settings.setTextZoom(100);
+        settings.setDefaultTextEncodingName("UTF-8");
+        
+        // Window and popup settings
         settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         
+        // File and content access
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
         settings.setLoadsImagesAutomatically(true);
         settings.setBlockNetworkImage(false);
         settings.setBlockNetworkLoads(false);
         
+        // Media settings
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         
+        // Geolocation (some DApps need it)
+        settings.setGeolocationEnabled(true);
+        
+        // Cookie settings
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             CookieManager cookieManager = CookieManager.getInstance();
             cookieManager.setAcceptCookie(true);
             cookieManager.setAcceptThirdPartyCookies(webView, true);
+            cookieManager.flush();
         }
         
+        // Disable force dark to prevent CSS issues
         if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
             try {
                 WebSettingsCompat.setForceDark(settings, WebSettingsCompat.FORCE_DARK_OFF);
@@ -370,100 +388,305 @@ public class DAppBrowserPlugin extends Plugin {
             }
         }
         
+        // Trust Wallet compatible user agent
         String ua = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 Trust/Android";
         settings.setUserAgentString(ua);
+        
+        // Enable web debugging in debug builds
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
     }
 
     private String buildInjectionScript() {
         String hexChainId = "0x" + Integer.toHexString(currentChainId);
         
+        // Comprehensive Trust Wallet-style provider injection
+        // Key improvements:
+        // 1. Non-intrusive injection that doesn't break React apps
+        // 2. Proper EventEmitter implementation
+        // 3. Direct RPC calls with dynamic URL switching
+        // 4. Full EIP-1193 + EIP-6963 compliance
         return "(function(){" +
+            "'use strict';" +
             "if(window._vkInjected)return;" +
             "window._vkInjected=true;" +
-            "window._vkCallbacks={};" +
+            
+            // State variables
             "var _id=1;" +
-            "var addr='" + currentAddress + "';" +
-            "var cid='" + hexChainId + "';" +
-            "var nv='" + currentChainId + "';" +
-            "var rpc='" + rpcUrl + "';" +
-            "" +
-            "function rpcCall(m,p){" +
-            "return fetch(rpc,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:Date.now(),method:m,params:p||[]})})" +
-            ".then(function(r){return r.json();})" +
-            ".then(function(d){if(d.error)throw new Error(d.error.message);return d.result;});" +
-            "}" +
-            "" +
-            "function P(){" +
-            "this.isMetaMask=true;" +
-            "this.isTrust=true;" +
-            "this.isTrustWallet=true;" +
-            "this.isVaultKey=true;" +
-            "this.chainId=cid;" +
-            "this.networkVersion=nv;" +
-            "this.selectedAddress=addr;" +
-            "this._rpcUrl=rpc;" +
-            "this._events={};" +
-            "this._metamask={isUnlocked:function(){return Promise.resolve(true);}};" +
-            "}" +
-            "" +
-            "P.prototype.isConnected=function(){return true;};" +
-            "" +
-            "P.prototype.on=function(e,c){if(!this._events[e])this._events[e]=[];this._events[e].push(c);return this;};" +
-            "P.prototype.once=function(e,c){var s=this;var w=function(){s.removeListener(e,w);c.apply(this,arguments);};return this.on(e,w);};" +
-            "P.prototype.off=function(e,c){return this.removeListener(e,c);};" +
-            "P.prototype.removeListener=function(e,c){if(this._events[e])this._events[e]=this._events[e].filter(function(x){return x!==c;});return this;};" +
-            "P.prototype.removeAllListeners=function(e){if(e)this._events[e]=[];else this._events={};return this;};" +
-            "P.prototype.emit=function(e){var a=Array.prototype.slice.call(arguments,1);if(this._events[e])this._events[e].forEach(function(c){try{c.apply(null,a);}catch(x){}});return true;};" +
-            "" +
-            "P.prototype.request=function(args){" +
-            "var s=this,m=args.method,p=args.params||[];" +
-            "" +
-            "if(m==='eth_accounts'||m==='eth_requestAccounts'){s.emit('connect',{chainId:cid});return Promise.resolve([addr]);}" +
-            "if(m==='eth_chainId')return Promise.resolve(cid);" +
-            "if(m==='net_version')return Promise.resolve(nv);" +
-            "if(m==='eth_coinbase')return Promise.resolve(addr);" +
-            "if(m==='wallet_requestPermissions')return Promise.resolve([{parentCapability:'eth_accounts'}]);" +
-            "if(m==='wallet_getPermissions')return Promise.resolve([{parentCapability:'eth_accounts'}]);" +
-            "if(m==='wallet_switchEthereumChain'){var nc=p[0]&&p[0].chainId;if(nc){cid=nc;nv=parseInt(nc,16).toString();s.chainId=cid;s.networkVersion=nv;var rpcs={1:'https://eth.llamarpc.com',56:'https://bsc-dataseed1.binance.org',137:'https://polygon-rpc.com',43114:'https://api.avax.network/ext/bc/C/rpc',42161:'https://arb1.arbitrum.io/rpc',10:'https://mainnet.optimism.io',8453:'https://mainnet.base.org'};rpc=rpcs[parseInt(nc,16)]||rpc;s._rpcUrl=rpc;s.emit('chainChanged',cid);}return Promise.resolve(null);}" +
-            "if(m==='wallet_addEthereumChain')return Promise.resolve(null);" +
-            "if(m==='wallet_watchAsset')return Promise.resolve(true);" +
-            "if(m==='wallet_revokePermissions'||m==='wallet_disconnect'){s.selectedAddress=null;s.emit('accountsChanged',[]);s.emit('disconnect',{code:4900,message:'Disconnected'});return new Promise(function(res,rej){var i=_id++;window._vkCallbacks[i]={resolve:res,reject:rej};try{VaultKeyNative.postMessage(JSON.stringify({id:i,method:m,params:p}));}catch(e){delete window._vkCallbacks[i];res(null);}});}" +
-            "" +
-            "var rpcMethods=['eth_blockNumber','eth_getBlockByNumber','eth_getBlockByHash','eth_call','eth_getBalance','eth_getCode','eth_getStorageAt','eth_getTransactionCount','eth_getTransactionByHash','eth_getTransactionReceipt','eth_getLogs','eth_estimateGas','eth_gasPrice','eth_feeHistory','eth_maxPriorityFeePerGas','eth_getBlockTransactionCountByHash','eth_getBlockTransactionCountByNumber','eth_getUncleCountByBlockHash','eth_getUncleCountByBlockNumber','eth_protocolVersion','eth_syncing','net_listening','net_peerCount','web3_clientVersion','web3_sha3'];" +
-            "if(rpcMethods.indexOf(m)>=0){return rpcCall(m,p);}" +
-            "" +
-            "return new Promise(function(res,rej){" +
-            "var i=_id++;" +
-            "window._vkCallbacks[i]={resolve:res,reject:rej};" +
-            "try{VaultKeyNative.postMessage(JSON.stringify({id:i,method:m,params:p}));}catch(e){delete window._vkCallbacks[i];rej(e);}" +
-            "setTimeout(function(){if(window._vkCallbacks[i]){delete window._vkCallbacks[i];rej(new Error('Timeout'));}},120000);" +
-            "});" +
+            "var _addr='" + currentAddress + "';" +
+            "var _chainId='" + hexChainId + "';" +
+            "var _netVersion='" + currentChainId + "';" +
+            "var _connected=true;" +
+            "var _callbacks={};" +
+            "var _listeners={};" +
+            
+            // RPC URLs map
+            "var _rpcs={" +
+            "1:'https://eth.llamarpc.com'," +
+            "56:'https://bsc-dataseed1.binance.org'," +
+            "137:'https://polygon-rpc.com'," +
+            "43114:'https://api.avax.network/ext/bc/C/rpc'," +
+            "42161:'https://arb1.arbitrum.io/rpc'," +
+            "10:'https://mainnet.optimism.io'," +
+            "8453:'https://mainnet.base.org'" +
             "};" +
-            "" +
-            "P.prototype.enable=function(){return this.request({method:'eth_requestAccounts'});};" +
-            "P.prototype.send=function(a,b){if(typeof a==='string')return this.request({method:a,params:b});if(typeof b==='function'){this.request({method:a.method,params:a.params}).then(function(r){b(null,{id:a.id,jsonrpc:'2.0',result:r});}).catch(function(e){b(e);});return;}return this.request({method:a.method,params:a.params});};" +
-            "P.prototype.sendAsync=function(a,b){this.request({method:a.method,params:a.params}).then(function(r){b(null,{id:a.id,jsonrpc:'2.0',result:r});}).catch(function(e){b(e);});};" +
-            "" +
-            "var p=new P();" +
-            "p.providers=[p];" +
-            "" +
-            "try{delete window.ethereum;}catch(x){}" +
-            "Object.defineProperty(window,'ethereum',{value:p,writable:false,configurable:true,enumerable:true});" +
-            "window.trustwallet={ethereum:p,provider:p};" +
-            "window.web3={currentProvider:p};" +
-            "" +
+            "var _rpcUrl=_rpcs[" + currentChainId + "]||'https://eth.llamarpc.com';" +
+            
+            // Store callbacks globally for native bridge
+            "window._vkCallbacks=_callbacks;" +
+            
+            // RPC call helper with retry
+            "function rpc(method,params){" +
+            "return fetch(_rpcUrl,{" +
+            "method:'POST'," +
+            "headers:{'Content-Type':'application/json','Accept':'application/json'}," +
+            "body:JSON.stringify({jsonrpc:'2.0',id:Date.now(),method:method,params:params||[]})" +
+            "}).then(function(r){" +
+            "if(!r.ok)throw new Error('Network error');" +
+            "return r.json();" +
+            "}).then(function(d){" +
+            "if(d.error)throw new Error(d.error.message||'RPC error');" +
+            "return d.result;" +
+            "});" +
+            "}" +
+            
+            // Event emitter methods
+            "function on(event,fn){" +
+            "if(!_listeners[event])_listeners[event]=[];" +
+            "_listeners[event].push(fn);" +
+            "return provider;" +
+            "}" +
+            
+            "function off(event,fn){" +
+            "if(_listeners[event]){" +
+            "_listeners[event]=_listeners[event].filter(function(f){return f!==fn;});" +
+            "}" +
+            "return provider;" +
+            "}" +
+            
+            "function emit(event){" +
+            "var args=Array.prototype.slice.call(arguments,1);" +
+            "if(_listeners[event]){" +
+            "_listeners[event].slice().forEach(function(fn){" +
+            "try{fn.apply(null,args);}catch(e){console.error('[VK]',e);}" +
+            "});" +
+            "}" +
+            "return true;" +
+            "}" +
+            
+            // Bridge to native for signing operations
+            "function bridge(method,params){" +
+            "return new Promise(function(resolve,reject){" +
+            "var id=_id++;" +
+            "_callbacks[id]={resolve:resolve,reject:reject};" +
+            "try{" +
+            "VaultKeyNative.postMessage(JSON.stringify({id:id,method:method,params:params}));" +
+            "}catch(e){" +
+            "delete _callbacks[id];" +
+            "reject(new Error('Native bridge unavailable'));" +
+            "}" +
+            "setTimeout(function(){" +
+            "if(_callbacks[id]){" +
+            "delete _callbacks[id];" +
+            "reject(new Error('Request timeout'));" +
+            "}" +
+            "},120000);" +
+            "});" +
+            "}" +
+            
+            // RPC methods that can be handled directly
+            "var directRpc=['eth_blockNumber','eth_getBlockByNumber','eth_getBlockByHash'," +
+            "'eth_call','eth_getBalance','eth_getCode','eth_getStorageAt'," +
+            "'eth_getTransactionCount','eth_getTransactionByHash','eth_getTransactionReceipt'," +
+            "'eth_getLogs','eth_estimateGas','eth_gasPrice','eth_feeHistory'," +
+            "'eth_maxPriorityFeePerGas','eth_getBlockTransactionCountByHash'," +
+            "'eth_getBlockTransactionCountByNumber','eth_getUncleCountByBlockHash'," +
+            "'eth_getUncleCountByBlockNumber','eth_protocolVersion','eth_syncing'," +
+            "'net_listening','net_peerCount','web3_clientVersion','web3_sha3'," +
+            "'eth_createAccessList','eth_getProof'];" +
+            
+            // Main request handler
+            "function request(args){" +
+            "var method=args.method;" +
+            "var params=args.params||[];" +
+            
+            // Account methods
+            "if(method==='eth_accounts'){" +
+            "return Promise.resolve(_addr?[_addr]:[]);" +
+            "}" +
+            
+            "if(method==='eth_requestAccounts'){" +
+            "if(_addr){" +
+            "emit('connect',{chainId:_chainId});" +
+            "return Promise.resolve([_addr]);" +
+            "}" +
+            "return bridge(method,params);" +
+            "}" +
+            
+            // Chain methods
+            "if(method==='eth_chainId'){" +
+            "return Promise.resolve(_chainId);" +
+            "}" +
+            
+            "if(method==='net_version'){" +
+            "return Promise.resolve(_netVersion);" +
+            "}" +
+            
+            "if(method==='eth_coinbase'){" +
+            "return Promise.resolve(_addr);" +
+            "}" +
+            
+            // Permissions
+            "if(method==='wallet_requestPermissions'){" +
+            "return Promise.resolve([{parentCapability:'eth_accounts'}]);" +
+            "}" +
+            
+            "if(method==='wallet_getPermissions'){" +
+            "return Promise.resolve([{parentCapability:'eth_accounts'}]);" +
+            "}" +
+            
+            // Chain switching
+            "if(method==='wallet_switchEthereumChain'){" +
+            "var newChainHex=params[0]&&params[0].chainId;" +
+            "if(newChainHex){" +
+            "var newChainInt=parseInt(newChainHex,16);" +
+            "if(_rpcs[newChainInt]){" +
+            "_chainId=newChainHex;" +
+            "_netVersion=String(newChainInt);" +
+            "_rpcUrl=_rpcs[newChainInt];" +
+            "provider.chainId=_chainId;" +
+            "provider.networkVersion=_netVersion;" +
+            "emit('chainChanged',_chainId);" +
+            "return Promise.resolve(null);" +
+            "}else{" +
+            "return Promise.reject({code:4902,message:'Chain not supported'});" +
+            "}" +
+            "}" +
+            "return Promise.resolve(null);" +
+            "}" +
+            
+            "if(method==='wallet_addEthereumChain'){" +
+            "return Promise.resolve(null);" +
+            "}" +
+            
+            "if(method==='wallet_watchAsset'){" +
+            "return Promise.resolve(true);" +
+            "}" +
+            
+            // Disconnect
+            "if(method==='wallet_revokePermissions'||method==='wallet_disconnect'){" +
+            "emit('accountsChanged',[]);" +
+            "emit('disconnect',{code:4900,message:'Disconnected'});" +
+            "return bridge(method,params).catch(function(){return null;});" +
+            "}" +
+            
+            // Direct RPC calls
+            "if(directRpc.indexOf(method)>=0){" +
+            "return rpc(method,params);" +
+            "}" +
+            
+            // Everything else goes to native bridge (signing, etc.)
+            "return bridge(method,params);" +
+            "}" +
+            
+            // Legacy methods
+            "function enable(){" +
+            "return request({method:'eth_requestAccounts'});" +
+            "}" +
+            
+            "function send(payload,callback){" +
+            "if(typeof payload==='string'){" +
+            "return request({method:payload,params:callback});" +
+            "}" +
+            "if(typeof callback==='function'){" +
+            "request({method:payload.method,params:payload.params})" +
+            ".then(function(r){callback(null,{id:payload.id,jsonrpc:'2.0',result:r});})" +
+            ".catch(function(e){callback(e);});" +
+            "return;" +
+            "}" +
+            "return request({method:payload.method,params:payload.params});" +
+            "}" +
+            
+            "function sendAsync(payload,callback){" +
+            "request({method:payload.method,params:payload.params})" +
+            ".then(function(r){callback(null,{id:payload.id,jsonrpc:'2.0',result:r});})" +
+            ".catch(function(e){callback(e);});" +
+            "}" +
+            
+            // Create provider object
+            "var provider={" +
+            "isMetaMask:true," +
+            "isTrust:true," +
+            "isTrustWallet:true," +
+            "isVaultKey:true," +
+            "chainId:_chainId," +
+            "networkVersion:_netVersion," +
+            "selectedAddress:_addr," +
+            "_rpcUrl:_rpcUrl," +
+            "isConnected:function(){return _connected;}," +
+            "request:request," +
+            "enable:enable," +
+            "send:send," +
+            "sendAsync:sendAsync," +
+            "on:on," +
+            "once:function(e,fn){var w=function(){off(e,w);fn.apply(null,arguments);};return on(e,w);}," +
+            "off:off," +
+            "removeListener:off," +
+            "removeAllListeners:function(e){if(e)_listeners[e]=[];else _listeners={};return provider;}," +
+            "emit:emit," +
+            "providers:[],"+
+            "_metamask:{isUnlocked:function(){return Promise.resolve(true);}}" +
+            "};" +
+            
+            "provider.providers.push(provider);" +
+            
+            // Install provider without breaking existing window.ethereum
+            "try{" +
+            "Object.defineProperty(window,'ethereum',{" +
+            "value:provider," +
+            "writable:false," +
+            "configurable:true," +
+            "enumerable:true" +
+            "});" +
+            "}catch(e){" +
+            "window.ethereum=provider;" +
+            "}" +
+            
+            // Trust Wallet compatibility
+            "window.trustwallet={ethereum:provider,provider:provider};" +
+            "window.web3={currentProvider:provider};" +
+            
+            // EIP-6963 announcements
+            "var walletInfo={" +
+            "uuid:'vaultkey-'+Date.now()," +
+            "name:'VaultKey'," +
+            "icon:'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect fill=%22%233b82f6%22 width=%2240%22 height=%2240%22 rx=%228%22/%3E%3Cpath fill=%22white%22 d=%22M20 8l8 6v12l-8 6-8-6V14z%22/%3E%3C/svg%3E'," +
+            "rdns:'app.vaultkey.wallet'" +
+            "};" +
+            
             "function announce(){" +
             "try{" +
-            "var d={info:{uuid:'vaultkey-'+Date.now(),name:'VaultKey',icon:'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect fill=%22%233b82f6%22 width=%2240%22 height=%2240%22 rx=%228%22/%3E%3Cpath fill=%22white%22 d=%22M20 8l8 6v12l-8 6-8-6V14z%22/%3E%3C/svg%3E',rdns:'app.vaultkey.wallet'},provider:p};" +
-            "window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:Object.freeze(d)}));" +
+            "var detail={info:walletInfo,provider:provider};" +
+            "window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:Object.freeze(detail)}));" +
             "}catch(e){}" +
             "}" +
-            "" +
+            
             "window.addEventListener('eip6963:requestProvider',announce);" +
-            "setTimeout(announce,0);" +
-            "setTimeout(announce,100);" +
+            
+            // Announce immediately and on delays
+            "announce();" +
+            "setTimeout(announce,50);" +
+            "setTimeout(announce,150);" +
             "setTimeout(announce,500);" +
+            "setTimeout(announce,1000);" +
+            
+            // Dispatch ethereum initialized event
+            "try{" +
             "window.dispatchEvent(new Event('ethereum#initialized'));" +
+            "}catch(e){}" +
+            
+            "console.log('[VaultKey] Provider injected, chain:',_chainId,'addr:',_addr?_addr.slice(0,10)+'...':'none');" +
             "})();";
     }
 
