@@ -89,6 +89,15 @@ export default function DApps() {
     // Use any EVM wallet address since they're chain-agnostic
     const address = connectedWallet || chainWallets[0]?.address || evmWallets[0]?.address || "";
     
+    console.log("[DApps] openNativeBrowser called", { 
+      targetUrl, 
+      address, 
+      hasConnectedWallet: !!connectedWallet,
+      chainWalletsCount: chainWallets.length,
+      evmWalletsCount: evmWallets.length,
+      isMobile 
+    });
+    
     if (!address) {
       toast({
         title: "No Wallet Found",
@@ -125,17 +134,24 @@ export default function DApps() {
     });
 
     try {
+      toast({
+        title: "Opening DApp...",
+        description: "Launching browser",
+        duration: 2000,
+      });
+      
       const success = await nativeDAppBrowser.open(targetUrl, address, selectedChainId);
       console.log("[DApps] Native browser open result:", success);
       
       if (success) {
         setIsNativeBrowserOpen(true);
         setConnectedWallet(address);
+        setCurrentUrl(targetUrl);
       } else {
         setIsLoading(false);
         toast({
           title: "Browser Error",
-          description: "Failed to open DApp browser. Please try again.",
+          description: "Failed to open DApp browser. Try updating the app.",
           variant: "destructive",
         });
       }
