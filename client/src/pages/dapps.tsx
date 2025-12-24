@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { ExternalLink, Globe, Wallet, ChevronRight, RefreshCw, X, ArrowLeft, Lock, Copy } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { ExternalLink, Globe, Wallet, ChevronRight, RefreshCw, X, ArrowLeft, Lock, Copy, AlertTriangle, Send, FileSignature } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,14 @@ import { HardwareStatusCard } from "@/components/hardware-status";
 import { ChainIcon } from "@/components/chain-icon";
 import { DEFAULT_CHAINS } from "@shared/schema";
 import { isNativeDAppBrowserAvailable, nativeDAppBrowser } from "@/lib/native-dapp-browser";
+import { dappBridge } from "@/lib/dapp-bridge";
+import { ethers } from "ethers";
+
+interface PendingSignRequest {
+  method: string;
+  params: any[];
+  resolve: (result: string | null) => void;
+}
 
 const EVM_CHAINS = DEFAULT_CHAINS.filter(c => c.chainId > 0);
 
@@ -41,7 +49,7 @@ const POPULAR_DAPPS: DAppInfo[] = [
 ];
 
 export default function DApps() {
-  const { isConnected, isUnlocked, wallets, chains } = useWallet();
+  const { isConnected, isUnlocked, wallets, chains, walletMode } = useWallet();
   const { toast } = useToast();
   
   const [url, setUrl] = useState("");
@@ -52,6 +60,8 @@ export default function DApps() {
   const [showWalletSelector, setShowWalletSelector] = useState(false);
   const [connectedWallet, setConnectedWallet] = useState<string | null>(null);
   const [isNativeBrowserOpen, setIsNativeBrowserOpen] = useState(false);
+  const [pendingSignRequest, setPendingSignRequest] = useState<PendingSignRequest | null>(null);
+  const [isSigningInProgress, setIsSigningInProgress] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const isMobile = isNativeDAppBrowserAvailable();
@@ -84,6 +94,115 @@ export default function DApps() {
       nativeDAppBrowser.updateAccount(connectedWallet, selectedChainId);
     }
   }, [connectedWallet, selectedChainId, isNativeBrowserOpen]);
+
+  // Handle sign request from DApp - show confirmation dialog
+  const handleSignRequest = useCallback((method: string, params: any[]): Promise<string | null> => {
+    return new Promise((resolve) => {
+      setPendingSignRequest({ method, params, resolve });
+    });
+  }, []);
+
+  // Format transaction details for display
+  const formatTransactionDetails = useCallback((method: string, params: any[]) => {
+    if (method === "eth_sendTransaction" || method === "eth_signTransaction") {
+      const tx = params[0] || {};
+      const value = tx.value ? ethers.formatEther(BigInt(tx.value)) : "0";
+      return {
+        type: "Transaction",
+        to: tx.to || "Contract Creation",
+        value: `${value} ${selectedChain.symbol}`,
+        data: tx.data ? (tx.data.length > 66 ? tx.data.slice(0, 66) + "..." : tx.data) : "0x",
+        hasData: tx.data && tx.data !== "0x",
+      };
+    } else if (method === "personal_sign" || method === "eth_sign") {
+      const message = params[0] || "";
+      let displayMessage = message;
+      if (message.startsWith("0x")) {
+        try {
+          displayMessage = Buffer.from(message.slice(2), "hex").toString("utf8");
+        } catch {
+          displayMessage = message;
+        }
+      }
+      return {
+        type: "Message Signature",
+        message: displayMessage.length > 200 ? displayMessage.slice(0, 200) + "..." : displayMessage,
+      };
+    } else if (method.includes("signTypedData")) {
+      try {
+        const typedData = typeof params[1] === "string" ? JSON.parse(params[1]) : params[1];
+        return {
+          type: "Typed Data Signature",
+          domain: typedData.domain?.name || "Unknown DApp",
+          primaryType: typedData.primaryType || "Unknown",
+        };
+      } catch {
+        return { type: "Typed Data Signature" };
+      }
+    }
+    return { type: method };
+  }, [selectedChain]);
+
+  // Approve sign request
+  const approveSignRequest = useCallback(async () => {
+    if (!pendingSignRequest) return;
+    
+    setIsSigningInProgress(true);
+    try {
+      dappBridge.setAccount(connectedWallet || "");
+      dappBridge.setChainId(selectedChainId);
+      dappBridge.setWalletMode(walletMode === "hard_wallet" ? "hardware" : "soft_wallet");
+      
+      // Create a promise to capture the response
+      let signedResult: string | null = null;
+      
+      dappBridge.setResponseHandler((response) => {
+        if (response.result) {
+          signedResult = response.result;
+        }
+      });
+      
+      // Execute the request through dappBridge
+      await dappBridge.handleRequest({
+        type: "web3_request",
+        id: Date.now(),
+        method: pendingSignRequest.method,
+        params: pendingSignRequest.params,
+      });
+      
+      pendingSignRequest.resolve(signedResult);
+      
+      toast({
+        title: "Signed Successfully",
+        description: pendingSignRequest.method.includes("send") ? "Transaction sent" : "Request signed",
+        duration: 3000,
+      });
+    } catch (error: any) {
+      console.error("[DApps] Sign error:", error);
+      toast({
+        title: "Signing Failed",
+        description: error?.message || "Failed to sign request",
+        variant: "destructive",
+      });
+      pendingSignRequest.resolve(null);
+    } finally {
+      setIsSigningInProgress(false);
+      setPendingSignRequest(null);
+    }
+  }, [pendingSignRequest, connectedWallet, selectedChainId, walletMode, toast]);
+
+  // Reject sign request
+  const rejectSignRequest = useCallback(() => {
+    if (pendingSignRequest) {
+      pendingSignRequest.resolve(null);
+      setPendingSignRequest(null);
+      toast({
+        title: "Request Rejected",
+        description: "You declined the signing request",
+        duration: 2000,
+      });
+    }
+  }, [pendingSignRequest, toast]);
 
   const openNativeBrowser = async (targetUrl: string) => {
     // Use any EVM wallet address since they're chain-agnostic
@@ -132,6 +251,9 @@ export default function DApps() {
     nativeDAppBrowser.setOnDisconnect(() => {
       setConnectedWallet(null);
     });
+
+    // Set up sign request handler to show confirmation dialog
+    nativeDAppBrowser.setOnSignRequest(handleSignRequest);
 
     try {
       toast({
@@ -500,6 +622,124 @@ export default function DApps() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowWalletSelector(false)} className="w-full">
               Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sign Request Confirmation Dialog */}
+      <Dialog open={!!pendingSignRequest} onOpenChange={(open) => !open && rejectSignRequest()}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {pendingSignRequest?.method.includes("send") ? (
+                <>
+                  <Send className="h-5 w-5 text-primary" />
+                  Confirm Transaction
+                </>
+              ) : (
+                <>
+                  <FileSignature className="h-5 w-5 text-primary" />
+                  Sign Request
+                </>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {currentUrl ? new URL(currentUrl).hostname : "DApp"} is requesting your signature
+            </DialogDescription>
+          </DialogHeader>
+
+          {pendingSignRequest && (() => {
+            const details = formatTransactionDetails(pendingSignRequest.method, pendingSignRequest.params);
+            return (
+              <div className="space-y-3">
+                <div className="p-3 bg-muted rounded-lg space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Type</span>
+                    <span className="text-sm font-medium">{details.type}</span>
+                  </div>
+                  
+                  {"to" in details && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">To</span>
+                      <span className="text-sm font-mono">
+                        {details.to.length > 20 ? `${details.to.slice(0, 10)}...${details.to.slice(-8)}` : details.to}
+                      </span>
+                    </div>
+                  )}
+                  
+                  {"value" in details && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Value</span>
+                      <span className="text-sm font-medium">{details.value}</span>
+                    </div>
+                  )}
+
+                  {"hasData" in details && details.hasData && (
+                    <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                      <AlertTriangle className="h-4 w-4" />
+                      <span className="text-xs">Contains contract interaction data</span>
+                    </div>
+                  )}
+
+                  {"message" in details && (
+                    <div className="space-y-1">
+                      <span className="text-sm text-muted-foreground">Message</span>
+                      <p className="text-xs bg-background p-2 rounded font-mono break-all">
+                        {details.message}
+                      </p>
+                    </div>
+                  )}
+
+                  {"domain" in details && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted-foreground">Domain</span>
+                        <span className="text-sm">{details.domain}</span>
+                      </div>
+                      {"primaryType" in details && (
+                        <div className="flex justify-between">
+                          <span className="text-sm text-muted-foreground">Action</span>
+                          <span className="text-sm">{details.primaryType}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                <div className="p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Only sign if you trust this DApp. Malicious sites can steal your funds.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button 
+              onClick={approveSignRequest} 
+              className="w-full"
+              disabled={isSigningInProgress}
+              data-testid="button-approve-sign"
+            >
+              {isSigningInProgress ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Signing...
+                </>
+              ) : (
+                pendingSignRequest?.method.includes("send") ? "Confirm Transaction" : "Sign"
+              )}
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={rejectSignRequest} 
+              className="w-full"
+              disabled={isSigningInProgress}
+              data-testid="button-reject-sign"
+            >
+              Reject
             </Button>
           </DialogFooter>
         </DialogContent>
