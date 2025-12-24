@@ -24,9 +24,12 @@ export class NativeDAppBrowserService {
   private onLoadingChange: ((loading: boolean) => void) | null = null;
   private onUrlChange: ((url: string) => void) | null = null;
   private onChainChange: ((chainId: number) => void) | null = null;
+  private onDisconnect: (() => void) | null = null;
   private onSignRequest: ((method: string, params: any[]) => Promise<string | null>) | null = null;
 
   async open(url: string, address: string, chainId: number): Promise<boolean> {
+    console.log("[NativeDAppBrowser] open() called - url:", url, "address:", address, "chainId:", chainId);
+    
     if (!isNativeDAppBrowserAvailable()) {
       console.log("[NativeDAppBrowser] Not available on this platform");
       return false;
@@ -36,25 +39,28 @@ export class NativeDAppBrowserService {
     this.currentChainId = chainId;
 
     try {
+      // Setup listeners first
       this.browserEventListener = await DAppBrowser.addListener("browserEvent", (data) => {
         console.log("[NativeDAppBrowser] Browser event:", data);
         if (this.onLoadingChange) {
           this.onLoadingChange(data.loading);
         }
-        if (this.onUrlChange) {
+        if (this.onUrlChange && data.url) {
           this.onUrlChange(data.url);
         }
       });
 
       this.web3RequestListener = await DAppBrowser.addListener("web3Request", async (data) => {
-        console.log("[NativeDAppBrowser] Web3 request:", data);
+        console.log("[NativeDAppBrowser] Web3 request:", data.method);
         await this.handleWeb3Request(data.id, data.method, data.params);
       });
 
+      // Open the browser activity
       const result = await DAppBrowser.open({ url, address, chainId });
+      console.log("[NativeDAppBrowser] open result:", result);
       return result.success;
-    } catch (e) {
-      console.error("[NativeDAppBrowser] Error opening:", e);
+    } catch (e: any) {
+      console.error("[NativeDAppBrowser] Error opening:", e?.message || e);
       return false;
     }
   }
@@ -69,10 +75,12 @@ export class NativeDAppBrowserService {
       this.web3RequestListener = null;
     }
 
-    try {
-      await DAppBrowser.close();
-    } catch (e) {
-      console.error("[NativeDAppBrowser] Error closing:", e);
+    if (isNativeDAppBrowserAvailable()) {
+      try {
+        await DAppBrowser.close();
+      } catch (e) {
+        console.error("[NativeDAppBrowser] Error closing:", e);
+      }
     }
   }
 
@@ -80,10 +88,12 @@ export class NativeDAppBrowserService {
     this.currentAddress = address;
     this.currentChainId = chainId;
     
-    try {
-      await DAppBrowser.updateAccount({ address, chainId });
-    } catch (e) {
-      console.error("[NativeDAppBrowser] Error updating account:", e);
+    if (isNativeDAppBrowserAvailable()) {
+      try {
+        await DAppBrowser.updateAccount({ address, chainId });
+      } catch (e) {
+        console.error("[NativeDAppBrowser] Error updating account:", e);
+      }
     }
   }
 
@@ -99,200 +109,86 @@ export class NativeDAppBrowserService {
     this.onChainChange = callback;
   }
 
+  setOnDisconnect(callback: () => void): void {
+    this.onDisconnect = callback;
+  }
+
   setOnSignRequest(callback: (method: string, params: any[]) => Promise<string | null>): void {
     this.onSignRequest = callback;
   }
 
-  private async handleWeb3Request(id: number, method: string, paramsJson: string): Promise<void> {
+  private async handleWeb3Request(id: number, method: string, paramsStr: string): Promise<void> {
+    console.log("[NativeDAppBrowser] Handling request:", method, "id:", id);
+    
     try {
-      let params: any[] = [];
-      try {
-        params = JSON.parse(paramsJson);
-      } catch (e) {
-        params = [];
+      const params = JSON.parse(paramsStr || "[]");
+      
+      // Handle signing requests through the bridge
+      if (method === "eth_sendTransaction" || 
+          method === "eth_signTransaction" ||
+          method === "personal_sign" ||
+          method === "eth_sign" ||
+          method === "eth_signTypedData" ||
+          method === "eth_signTypedData_v3" ||
+          method === "eth_signTypedData_v4") {
+        
+        // Use the callback if set, otherwise use dappBridge
+        if (this.onSignRequest) {
+          const result = await this.onSignRequest(method, params);
+          if (result) {
+            await this.sendResponse(id, result, null);
+          } else {
+            await this.sendResponse(id, null, "User rejected");
+          }
+        } else {
+          // Use dappBridge for signing
+          dappBridge.setAccount(this.currentAddress);
+          dappBridge.setChainId(this.currentChainId);
+          await dappBridge.handleRequest({
+            type: "web3_request",
+            id,
+            method,
+            params
+          });
+          // Response is handled by dappBridge's response handler
+        }
+        return;
       }
 
-      dappBridge.setChainId(this.currentChainId);
-      dappBridge.setAccount(this.currentAddress);
-
-      let result: any = null;
-      let error: string = "";
-
-      switch (method) {
-        case "eth_requestAccounts":
-        case "eth_accounts":
-          result = [this.currentAddress];
-          break;
-
-        case "eth_chainId":
-          result = "0x" + this.currentChainId.toString(16);
-          break;
-
-        case "net_version":
-          result = this.currentChainId.toString();
-          break;
-
-        case "wallet_switchEthereumChain": {
-          const targetChainIdHex = params[0]?.chainId;
-          if (targetChainIdHex) {
-            const targetChainId = parseInt(targetChainIdHex, 16);
-            const supportedChains = [1, 56, 137, 43114, 42161, 10];
-            
-            if (supportedChains.includes(targetChainId)) {
-              this.currentChainId = targetChainId;
-              dappBridge.setChainId(targetChainId);
-              
-              if (this.onChainChange) {
-                this.onChainChange(targetChainId);
-              }
-              
-              await DAppBrowser.updateAccount({ 
-                address: this.currentAddress, 
-                chainId: targetChainId 
-              });
-              
-              result = null;
-            } else {
-              error = "Chain not supported";
-            }
-          } else {
-            result = null;
+      // Handle chain switch requests
+      if (method === "wallet_switchEthereumChain") {
+        const chainIdHex = params[0]?.chainId;
+        if (chainIdHex) {
+          const newChainId = parseInt(chainIdHex, 16);
+          this.currentChainId = newChainId;
+          if (this.onChainChange) {
+            this.onChainChange(newChainId);
           }
-          break;
         }
-
-        case "eth_sendTransaction":
-        case "personal_sign":
-        case "eth_sign":
-        case "eth_signTypedData":
-        case "eth_signTypedData_v3":
-        case "eth_signTypedData_v4": {
-          if (this.onSignRequest) {
-            try {
-              const signResult = await this.onSignRequest(method, params);
-              if (signResult) {
-                result = signResult;
-              } else {
-                error = "User rejected the request";
-              }
-            } catch (e: any) {
-              error = e.message || "Signing failed";
-            }
-          } else {
-            try {
-              const signResult = await this.executeBridgeRequest(id, method, params);
-              if (signResult.error) {
-                error = signResult.error.message;
-              } else {
-                result = signResult.result;
-              }
-            } catch (e: any) {
-              error = e.message || "Signing failed";
-            }
-          }
-          break;
-        }
-
-        default:
-          try {
-            const rpcResult = await this.rpcCall(method, params);
-            result = rpcResult;
-          } catch (e: any) {
-            error = e.message || "RPC call failed";
-          }
+        await this.sendResponse(id, "null", null);
+        return;
       }
 
+      // For other methods, respond with success
+      await this.sendResponse(id, "null", null);
+    } catch (e: any) {
+      console.error("[NativeDAppBrowser] Request error:", e);
+      await this.sendResponse(id, null, e?.message || "Unknown error");
+    }
+  }
+
+  private async sendResponse(id: number, result: string | null, error: string | null): Promise<void> {
+    if (!isNativeDAppBrowserAvailable()) return;
+
+    try {
       await DAppBrowser.sendResponse({
         id,
-        result: result !== null ? JSON.stringify(result) : undefined,
+        result: result || undefined,
         error: error || undefined,
       });
-    } catch (e: any) {
-      console.error("[NativeDAppBrowser] Error handling request:", e);
-      await DAppBrowser.sendResponse({
-        id,
-        error: e.message || "Unknown error",
-      });
+    } catch (e) {
+      console.error("[NativeDAppBrowser] Error sending response:", e);
     }
-  }
-
-  private pendingBridgeRequests: Map<number, { resolve: (value: { result?: any; error?: { code: number; message: string } }) => void }> = new Map();
-  private bridgeHandlerInstalled: boolean = false;
-
-  private installBridgeResponseHandler(): void {
-    if (this.bridgeHandlerInstalled) return;
-    
-    dappBridge.setResponseHandler((response) => {
-      const pending = this.pendingBridgeRequests.get(response.id);
-      if (pending) {
-        this.pendingBridgeRequests.delete(response.id);
-        pending.resolve({ result: response.result, error: response.error });
-      }
-    });
-    
-    this.bridgeHandlerInstalled = true;
-  }
-
-  private async executeBridgeRequest(id: number, method: string, params: any[]): Promise<{ result?: any; error?: { code: number; message: string } }> {
-    this.installBridgeResponseHandler();
-    
-    return new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        if (this.pendingBridgeRequests.has(id)) {
-          this.pendingBridgeRequests.delete(id);
-          resolve({ error: { code: 4000, message: "Request timed out" } });
-        }
-      }, 120000);
-
-      this.pendingBridgeRequests.set(id, {
-        resolve: (value) => {
-          clearTimeout(timeoutId);
-          resolve(value);
-        }
-      });
-
-      const bridgeRequest = { type: "VAULTKEY_REQUEST", id, method, params };
-      dappBridge.handleRequest(bridgeRequest).catch((e: any) => {
-        if (this.pendingBridgeRequests.has(id)) {
-          this.pendingBridgeRequests.delete(id);
-          clearTimeout(timeoutId);
-          resolve({ error: { code: 4000, message: e.message || "Unknown error" } });
-        }
-      });
-    });
-  }
-
-  private async rpcCall(method: string, params: any[]): Promise<any> {
-    const rpcUrls: Record<number, string> = {
-      1: "https://eth.llamarpc.com",
-      56: "https://bsc-dataseed.binance.org",
-      137: "https://polygon-rpc.com",
-      43114: "https://api.avax.network/ext/bc/C/rpc",
-      42161: "https://arb1.arbitrum.io/rpc",
-      10: "https://mainnet.optimism.io",
-    };
-
-    const rpcUrl = rpcUrls[this.currentChainId];
-    if (!rpcUrl) {
-      throw new Error("Unsupported chain");
-    }
-
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: Date.now(),
-        method,
-        params,
-      }),
-    });
-
-    const data = await response.json();
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-    return data.result;
   }
 }
 
