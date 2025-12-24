@@ -21,8 +21,8 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -51,10 +51,10 @@ public class DAppBrowserActivity extends AppCompatActivity {
     private WebView webView;
     private ProgressBar progressBar;
     private EditText urlInput;
-    private ImageButton backButton;
-    private ImageButton forwardButton;
-    private ImageButton refreshButton;
-    private ImageButton closeButton;
+    private Button backButton;
+    private Button forwardButton;
+    private Button refreshButton;
+    private Button closeButton;
     
     private String currentAddress = "";
     private int currentChainId = 1;
@@ -108,7 +108,7 @@ public class DAppBrowserActivity extends AppCompatActivity {
         );
         header.setLayoutParams(headerParams);
         
-        closeButton = createIconButton("\u2190", density);
+        closeButton = createTextButton("\u2190", density);
         closeButton.setOnClickListener(v -> finish());
         header.addView(closeButton);
         
@@ -137,7 +137,7 @@ public class DAppBrowserActivity extends AppCompatActivity {
         urlInput.setLayoutParams(urlParams);
         header.addView(urlInput);
         
-        backButton = createIconButton("\u25C0", density);
+        backButton = createTextButton("\u25C0", density);
         backButton.setOnClickListener(v -> {
             if (webView != null && webView.canGoBack()) {
                 webView.goBack();
@@ -145,7 +145,7 @@ public class DAppBrowserActivity extends AppCompatActivity {
         });
         header.addView(backButton);
         
-        forwardButton = createIconButton("\u25B6", density);
+        forwardButton = createTextButton("\u25B6", density);
         forwardButton.setOnClickListener(v -> {
             if (webView != null && webView.canGoForward()) {
                 webView.goForward();
@@ -153,7 +153,7 @@ public class DAppBrowserActivity extends AppCompatActivity {
         });
         header.addView(forwardButton);
         
-        refreshButton = createIconButton("\u21BB", density);
+        refreshButton = createTextButton("\u21BB", density);
         refreshButton.setOnClickListener(v -> {
             if (webView != null) {
                 webView.reload();
@@ -184,22 +184,21 @@ public class DAppBrowserActivity extends AppCompatActivity {
         setContentView(root);
     }
     
-    private ImageButton createIconButton(String text, float density) {
-        ImageButton btn = new ImageButton(this);
+    private Button createTextButton(String text, float density) {
+        Button btn = new Button(this);
+        btn.setText(text);
+        btn.setTextColor(Color.WHITE);
+        btn.setTextSize(16);
         btn.setBackgroundColor(Color.TRANSPARENT);
-        btn.setPadding((int)(12 * density), (int)(8 * density), (int)(12 * density), (int)(8 * density));
-        
-        TextView tv = new TextView(this);
-        tv.setText(text);
-        tv.setTextColor(Color.WHITE);
-        tv.setTextSize(18);
-        
-        btn.setImageDrawable(null);
-        btn.setContentDescription(text);
+        btn.setPadding((int)(8 * density), (int)(4 * density), (int)(8 * density), (int)(4 * density));
+        btn.setMinWidth(0);
+        btn.setMinimumWidth(0);
+        btn.setMinHeight(0);
+        btn.setMinimumHeight(0);
         
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-            (int)(44 * density),
-            (int)(44 * density)
+            (int)(40 * density),
+            (int)(40 * density)
         );
         btn.setLayoutParams(params);
         
