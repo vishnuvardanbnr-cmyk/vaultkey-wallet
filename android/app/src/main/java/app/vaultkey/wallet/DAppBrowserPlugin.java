@@ -199,27 +199,30 @@ public class DAppBrowserPlugin extends Plugin {
     @SuppressLint("SetJavaScriptEnabled")
     private void createWebView(String url) {
         Activity activity = getActivity();
-        if (activity == null) return;
+        if (activity == null) {
+            Log.e(TAG, "Activity is null, cannot create WebView");
+            return;
+        }
 
+        Log.d(TAG, "Creating WebView for URL: " + url);
         destroyWebView();
 
         float density = activity.getResources().getDisplayMetrics().density;
-        int headerHeightPx = (int) (100 * density);
-        int footerHeightPx = (int) (80 * density);
 
+        // Create fullscreen container - no margins since Capacitor handles its own UI
         container = new FrameLayout(activity);
-        container.setBackgroundColor(Color.parseColor("#f5f5f5"));
+        container.setBackgroundColor(Color.WHITE);
         FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         );
-        containerParams.setMargins(0, headerHeightPx, 0, footerHeightPx);
+        // No margins - fullscreen overlay
         container.setLayoutParams(containerParams);
 
         progressBar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setLayoutParams(new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            (int) (3 * density)
+            (int) (4 * density)
         ));
         progressBar.setIndeterminate(true);
         container.addView(progressBar);
@@ -230,7 +233,8 @@ public class DAppBrowserPlugin extends Plugin {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         );
-        webViewParams.setMargins(0, (int)(3 * density), 0, 0);
+        // Small top margin for progress bar
+        webViewParams.setMargins(0, (int)(4 * density), 0, 0);
         webView.setLayoutParams(webViewParams);
 
         configureWebSettings(webView);
@@ -328,7 +332,13 @@ public class DAppBrowserPlugin extends Plugin {
         
         ViewGroup rootView = activity.findViewById(android.R.id.content);
         rootView.addView(container);
-
+        
+        // Bring to front to ensure it's above the Capacitor WebView
+        container.bringToFront();
+        container.requestLayout();
+        container.invalidate();
+        
+        Log.d(TAG, "WebView added to view hierarchy, loading URL: " + url);
         webView.loadUrl(url);
     }
 
