@@ -86,17 +86,19 @@ export default function DApps() {
   }, [connectedWallet, selectedChainId, isNativeBrowserOpen]);
 
   const openNativeBrowser = async (targetUrl: string) => {
-    const address = connectedWallet || chainWallets[0]?.address || "";
+    // Use any EVM wallet address since they're chain-agnostic
+    const address = connectedWallet || chainWallets[0]?.address || evmWallets[0]?.address || "";
     
     if (!address) {
       toast({
-        title: "No Wallet Selected",
-        description: "Please select a wallet to connect to DApps",
+        title: "No Wallet Found",
+        description: "Please create a wallet first to use DApps",
         variant: "destructive",
       });
-      setShowWalletSelector(true);
       return;
     }
+    
+    console.log("[DApps] Opening native browser:", targetUrl, "with address:", address, "chainId:", selectedChainId);
 
     setIsLoading(true);
     
@@ -122,13 +124,29 @@ export default function DApps() {
       setConnectedWallet(null);
     });
 
-    const success = await nativeDAppBrowser.open(targetUrl, address, selectedChainId);
-    
-    if (success) {
-      setIsNativeBrowserOpen(true);
-      setConnectedWallet(address);
-    } else {
+    try {
+      const success = await nativeDAppBrowser.open(targetUrl, address, selectedChainId);
+      console.log("[DApps] Native browser open result:", success);
+      
+      if (success) {
+        setIsNativeBrowserOpen(true);
+        setConnectedWallet(address);
+      } else {
+        setIsLoading(false);
+        toast({
+          title: "Browser Error",
+          description: "Failed to open DApp browser. Please try again.",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("[DApps] Error opening native browser:", error);
       setIsLoading(false);
+      toast({
+        title: "Browser Error",
+        description: error?.message || "Failed to open DApp browser",
+        variant: "destructive",
+      });
     }
   };
 
